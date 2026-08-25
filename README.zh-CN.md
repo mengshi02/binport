@@ -118,6 +118,7 @@ Host server-a
 $ binport server-a rg "authentication timeout" /var/log
 $ binport server-a btm               # 自动分配 PTY
 $ binport --tty server-a TOOL ...    # 为其他交互工具强制分配 PTY
+$ binport jump-a,server-a btm        # 临时经过 jump-a，在 server-a 上执行
 /var/log/auth.log:42:authentication timeout upstream=identity
 ```
 

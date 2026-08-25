@@ -12,6 +12,7 @@ All notable changes to binport are documented here. The format follows
 
 - Add interactive SSH PTY mode with raw keyboard forwarding via `--tty`.
 - Automatically allocate a PTY for the `btm` system monitor.
+- Add ad-hoc one-hop routes with `binport JUMP,TARGET TOOL ...`.
 
 ## [0.1.3] - 2026-08-25
 

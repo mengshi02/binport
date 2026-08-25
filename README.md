@@ -253,6 +253,7 @@ binport server-a rg 'panic|fatal' /srv
 binport --password root@server-a rg timeout /var/log
 binport server-a btm               # PTY is selected automatically
 binport --tty server-a TOOL ...    # force a PTY for another interactive tool
+binport jump-a,server-a btm        # ad-hoc one-hop route, run on server-a
 ```
 
 `HOST` can be `user@hostname` or an exact alias in `~/.ssh/config`:

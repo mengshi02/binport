@@ -1000,8 +1000,14 @@ async fn remote_tty_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<u32> {
-    let destination = Destination::resolve(host)?;
-    let ssh = NativeSsh::connect(&destination, password).await?;
+    let ssh = if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
+        let jump = NativeSsh::connect_jump(jump_host, password).await?;
+        let destination = Destination::resolve(target_host)?;
+        NativeSsh::connect_with_jump(&destination, password, &jump).await?
+    } else {
+        let destination = Destination::resolve(host)?;
+        NativeSsh::connect(&destination, password).await?
+    };
     let candidates = toolbox_candidates(tool)?;
     if candidates.is_empty() {
         return Err(io::Error::new(
@@ -1152,8 +1158,27 @@ async fn remote_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<RemoteOutcome> {
+    if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
+        let jump = NativeSsh::connect_jump(jump_host, password).await?;
+        let mut destination = Destination::resolve(target_host)?;
+        destination.proxy_jump = Some(jump_host.to_owned());
+        return remote_destination_async(destination, tool, arguments, password, Some(&jump)).await;
+    }
     let destination = Destination::resolve(host)?;
     remote_destination_async(destination, tool, arguments, password, None).await
+}
+
+fn ad_hoc_route(host: &str) -> io::Result<Option<(&str, &str)>> {
+    let Some((jump, target)) = host.split_once(',') else {
+        return Ok(None);
+    };
+    if jump.is_empty() || target.is_empty() || target.contains(',') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ad-hoc routes use JUMP,TARGET with exactly two SSH aliases",
+        ));
+    }
+    Ok(Some((jump, target)))
 }
 
 async fn remote_destination_async(
@@ -2310,5 +2335,21 @@ fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
         } else {
             println!("{host:width$}  {line}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ad_hoc_route;
+
+    #[test]
+    fn parses_exactly_one_ad_hoc_jump() {
+        assert_eq!(
+            ad_hoc_route("jump-a,server-a").unwrap(),
+            Some(("jump-a", "server-a"))
+        );
+        assert_eq!(ad_hoc_route("server-a").unwrap(), None);
+        assert!(ad_hoc_route("jump-a,server-a,server-b").is_err());
+        assert!(ad_hoc_route("jump-a,").is_err());
     }
 }
