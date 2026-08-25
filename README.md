@@ -1,5 +1,7 @@
 # binport
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 **Build a toolbox once. Run it on any SSH host. Install nothing there.**
 
 ![binport terminal demo](docs/demo.svg)
