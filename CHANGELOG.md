@@ -6,6 +6,8 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-25
+
 ### Added
 
 - Build reproducible, multi-platform toolboxes from a `Binfile` and
@@ -23,4 +25,5 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/commits/main
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mengshi02/binport/releases/tag/v0.1.0

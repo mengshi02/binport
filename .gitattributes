@@ -1,0 +1,5 @@
+# Keep GitHub's language bar focused on the implementation language. Repository
+# documentation, workflows, fixtures, lockfiles, and release scripts remain
+# browsable but are excluded from Linguist language statistics.
+* linguist-vendored
+*.rs linguist-vendored=false
