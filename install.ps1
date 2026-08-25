@@ -5,7 +5,7 @@ $version = if ($env:BINPORT_VERSION) { $env:BINPORT_VERSION } else { "latest" }
 
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
 if ($architecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
-    throw "binport: unsupported Windows architecture: $architecture (v0.1.1 supports x64)"
+    throw "binport: unsupported Windows architecture: $architecture (the Windows client supports x64)"
 }
 
 $asset = "binport-windows-amd64.zip"

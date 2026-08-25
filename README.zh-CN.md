@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.1" \
+BINPORT_VERSION="v0.1.2" \
 sh install.sh
 ```
 
@@ -47,7 +47,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.1.1 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.1.2 --locked
 ```
 
 ## 一次密码，长期免密
@@ -243,7 +243,8 @@ binport pull oci://harbor.example.com/platform/ops:v1 \
 
 ## 当前范围
 
-- 精选工具：`rg`、`fd`、`jq`
+- 精选工具：`rg`、`fd`、`jq`、`eza`。`eza` 的 Linux amd64 产物为静态版本；
+  上游 Linux arm64 产物依赖 glibc。
 - 远程目标：Linux amd64、Linux arm64
 - 本地客户端：Linux、macOS 的 amd64/arm64，以及 Windows amd64
 - SSH 认证：Agent、未加密私钥、交互式密码、binport 管理的独立 Key

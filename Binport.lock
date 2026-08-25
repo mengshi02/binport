@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "binfile_sha256": "6b8161b11fd349f3bbe4a2b91d4927292afa2d53a16296150f4e5a0ffce1618a",
+  "binfile_sha256": "ee6208ced42f9bd056c1929a6be799c7e463ef6af8c5dbc7043558e49e8ad763",
   "tools": [
     {
       "name": "rg",
@@ -27,6 +27,14 @@
       "archive": "binary"
     },
     {
+      "name": "eza",
+      "version": "0.23.5",
+      "platform": "linux/amd64",
+      "source": "https://github.com/eza-community/eza/releases/download/v0.23.5/eza_x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "e06eebab74b73d6b7d51a796a353824b001bea82df077706382e100815d28904",
+      "archive": "tar+gzip"
+    },
+    {
       "name": "rg",
       "version": "15.2.0",
       "platform": "linux/arm64",
@@ -49,6 +57,14 @@
       "source": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64",
       "source_sha256": "8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309",
       "archive": "binary"
+    },
+    {
+      "name": "eza",
+      "version": "0.23.5",
+      "platform": "linux/arm64",
+      "source": "https://github.com/eza-community/eza/releases/download/v0.23.5/eza_aarch64-unknown-linux-gnu_no_libgit.tar.gz",
+      "source_sha256": "1c01b578b5bd3f23b7de5a4b41936cde20fb16ff16a03e63266317ac1eb821e0",
+      "archive": "tar+gzip"
     }
   ],
   "copies": []

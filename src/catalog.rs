@@ -64,7 +64,12 @@ pub struct Artifact {
     pub archive: Archive,
 }
 
-pub const TOOLS: &[(&str, &str)] = &[("rg", "15.2.0"), ("fd", "10.4.2"), ("jq", "1.8.2")];
+pub const TOOLS: &[(&str, &str)] = &[
+    ("rg", "15.2.0"),
+    ("fd", "10.4.2"),
+    ("jq", "1.8.2"),
+    ("eza", "0.23.5"),
+];
 
 pub fn artifact(tool: &str, version: Option<&str>, platform: Platform) -> Option<Artifact> {
     let entry = ARTIFACTS
@@ -125,6 +130,22 @@ const ARTIFACTS: &[Artifact] = &[
         sha256: "8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309",
         archive: Archive::Binary,
     },
+    Artifact {
+        tool: "eza",
+        version: "0.23.5",
+        platform: Platform::LinuxAmd64,
+        url: "https://github.com/eza-community/eza/releases/download/v0.23.5/eza_x86_64-unknown-linux-musl.tar.gz",
+        sha256: "e06eebab74b73d6b7d51a796a353824b001bea82df077706382e100815d28904",
+        archive: Archive::TarGz,
+    },
+    Artifact {
+        tool: "eza",
+        version: "0.23.5",
+        platform: Platform::LinuxArm64,
+        url: "https://github.com/eza-community/eza/releases/download/v0.23.5/eza_aarch64-unknown-linux-gnu_no_libgit.tar.gz",
+        sha256: "1c01b578b5bd3f23b7de5a4b41936cde20fb16ff16a03e63266317ac1eb821e0",
+        archive: Archive::TarGz,
+    },
 ];
 
 #[cfg(test)]
@@ -142,5 +163,18 @@ mod tests {
             Some(Platform::LinuxArm64)
         );
         assert_eq!(Platform::from_uname("Darwin", "arm64"), None);
+    }
+
+    #[test]
+    fn every_curated_tool_has_an_artifact_for_each_target() {
+        for (tool, version) in TOOLS {
+            for platform in Platform::ALL {
+                assert!(
+                    artifact(tool, Some(version), platform).is_some(),
+                    "missing {tool}@{version} for {}",
+                    platform.name()
+                );
+            }
+        }
     }
 }

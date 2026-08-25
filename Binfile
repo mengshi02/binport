@@ -5,3 +5,4 @@ TARGET linux/arm64
 TOOL rg@15.2.0
 TOOL fd@10.4.2
 TOOL jq@1.8.2
+TOOL eza@0.23.5

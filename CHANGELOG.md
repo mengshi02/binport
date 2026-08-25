@@ -6,6 +6,12 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-25
+
+### Added
+
+- Add `eza` 0.23.5 to the curated catalog for modern remote directory listings.
+
 ## [0.1.1] - 2026-08-25
 
 ### Added
@@ -41,6 +47,7 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/mengshi02/binport/releases/tag/v0.1.2
 [0.1.1]: https://github.com/mengshi02/binport/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mengshi02/binport/releases/tag/v0.1.0

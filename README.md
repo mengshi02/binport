@@ -29,7 +29,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.1" \
+BINPORT_VERSION="v0.1.2" \
 sh install.sh
 ```
 
@@ -455,7 +455,8 @@ not transfer the executable again.
 
 This is an early Linux-remote-focused release:
 
-- Curated tools: `rg`, `fd`, and `jq`.
+- Curated tools: `rg`, `fd`, `jq`, and `eza`. The `eza` Linux amd64
+  artifact is static; its upstream Linux arm64 artifact requires glibc.
 - Targets: Linux amd64 and Linux arm64.
 - Clients: Linux and macOS on amd64/arm64, plus Windows amd64.
 - Authentication: SSH agent, unencrypted private key, or an interactive
