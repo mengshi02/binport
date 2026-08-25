@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -224,6 +225,62 @@ impl NativeSsh {
         Ok(status)
     }
 
+    pub async fn execute_tty(&self, command: &str, eof_on_quit: bool) -> io::Result<u32> {
+        if !std::io::IsTerminal::is_terminal(&io::stdin())
+            || !std::io::IsTerminal::is_terminal(&io::stdout())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "TTY mode requires an interactive terminal",
+            ));
+        }
+        crossterm::terminal::enable_raw_mode().map_err(io::Error::other)?;
+        let _raw_mode = RawModeGuard;
+        let (output_tx, mut output_rx) = mpsc::channel(32);
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let input_task = tokio::spawn(async move {
+            let mut stdin = tokio::io::stdin();
+            let mut buffer = vec![0_u8; 4096];
+            loop {
+                let read = stdin.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                let input = buffer[..read].to_vec();
+                let quits =
+                    input == [3] || (eof_on_quit && matches!(input.as_slice(), [b'q'] | [b'Q']));
+                if input_tx.send(input).await.is_err() {
+                    break;
+                }
+                if quits {
+                    let _ = input_tx.send(Vec::new()).await;
+                    break;
+                }
+            }
+            Ok::<_, io::Error>(())
+        });
+        let execution =
+            self.client
+                .execute_io(command, output_tx, None, Some(input_rx), true, None);
+        tokio::pin!(execution);
+        let mut stdout = io::stdout();
+        let result = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other),
+                Some(data) = output_rx.recv() => {
+                    stdout.write_all(&data)?;
+                    stdout.flush()?;
+                }
+            }
+        };
+        input_task.abort();
+        while let Ok(data) = output_rx.try_recv() {
+            stdout.write_all(&data)?;
+        }
+        stdout.flush()?;
+        result
+    }
+
     pub async fn execute_capture_with_input(
         &self,
         command: &str,
@@ -258,6 +315,14 @@ impl NativeSsh {
                 Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
             }
         }
+    }
+}
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
     }
 }
 

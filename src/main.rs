@@ -41,6 +41,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Allocate an interactive terminal for a single remote host
+    #[arg(short = 't', long, global = true)]
+    tty: bool,
+
     #[command(subcommand)]
     command: CommandKind,
 }
@@ -242,6 +246,7 @@ fn run(cli: Cli) -> io::Result<u8> {
     let verbose = cli.verbose;
     let concurrency = cli.concurrency;
     let json = cli.json;
+    let tty = cli.tty;
     match cli.command {
         CommandKind::Auth(args) => auth(args, json),
         CommandKind::Resolve(args) => resolve(args),
@@ -260,7 +265,7 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Warm(args) => warm(args, use_password, concurrency, json),
         CommandKind::Plan(args) => plan(args, json),
         CommandKind::Watch(args) => watch(args, use_password, concurrency, json),
-        CommandKind::Remote(args) => remote(args, use_password, verbose, concurrency, json),
+        CommandKind::Remote(args) => remote(args, use_password, verbose, concurrency, json, tty),
     }
 }
 
@@ -906,6 +911,7 @@ fn remote(
     verbose: bool,
     concurrency: usize,
     json: bool,
+    tty: bool,
 ) -> io::Result<u8> {
     if args.len() < 2 {
         return Err(io::Error::new(
@@ -924,7 +930,14 @@ fn remote(
         None
     };
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let tty = tty || tool == OsStr::new("btm");
     if let Some(group) = host.strip_prefix('@') {
+        if tty {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "TTY mode supports one host at a time, not fleet targets",
+            ));
+        }
         if concurrency == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -949,6 +962,24 @@ fn remote(
         ));
     }
 
+    if tty {
+        if json {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--tty and --json cannot be used together",
+            ));
+        }
+        return runtime
+            .block_on(remote_tty_async(
+                host,
+                tool,
+                &args[2..],
+                password.as_deref(),
+            ))
+            .map(|status| u8::try_from(status).unwrap_or(1))
+            .map_err(|error| authentication_hint(host, error));
+    }
+
     let outcome = runtime
         .block_on(remote_async(host, tool, &args[2..], password.as_deref()))
         .map_err(|error| authentication_hint(host, error))?;
@@ -961,6 +992,67 @@ fn remote(
         print_single(&outcome, verbose)?;
     }
     Ok(u8::try_from(outcome.status).unwrap_or(1))
+}
+
+async fn remote_tty_async(
+    host: &str,
+    tool: &OsStr,
+    arguments: &[OsString],
+    password: Option<&str>,
+) -> io::Result<u32> {
+    let destination = Destination::resolve(host)?;
+    let ssh = NativeSsh::connect(&destination, password).await?;
+    let candidates = toolbox_candidates(tool)?;
+    if candidates.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("tool {:?} is not built; run `binport build` first", tool),
+        ));
+    }
+    let (probe_status, os, arch) = {
+        let (status, stdout, _) = ssh.execute_capture("uname -s; uname -m").await?;
+        let mut lines = stdout.lines();
+        (
+            status,
+            lines.next().unwrap_or_default().to_owned(),
+            lines.next().unwrap_or_default().to_owned(),
+        )
+    };
+    if probe_status != 0 {
+        return Err(io::Error::other("failed to detect remote platform"));
+    }
+    let platform = Platform::from_uname(&os, &arch).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("remote platform is not supported: {os}/{arch}"),
+        )
+    })?;
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.platform == platform)
+        .ok_or_else(|| io::Error::other("toolbox artifact is missing for the remote platform"))?;
+    let (cached, _, _) = ssh
+        .execute_capture(&cache_check_command(&candidate.remote_file))
+        .await?;
+    if cached != 0 {
+        let (uploaded, _, upload_error) = ssh
+            .execute_capture_with_input(
+                &upload_command(&candidate.directory, &candidate.remote_file),
+                fs::read(&candidate.local_path)?,
+            )
+            .await?;
+        if uploaded != 0 {
+            return Err(io::Error::other(format!(
+                "tool upload failed: {}",
+                String::from_utf8_lossy(&upload_error)
+            )));
+        }
+    }
+    ssh.execute_tty(
+        &execute_command(&candidate.remote_file, arguments)?,
+        tool == OsStr::new("btm"),
+    )
+    .await
 }
 
 fn authentication_hint(host: &str, error: io::Error) -> io::Error {

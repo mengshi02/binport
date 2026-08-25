@@ -6,6 +6,13 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-25
+
+### Added
+
+- Add interactive SSH PTY mode with raw keyboard forwarding via `--tty`.
+- Automatically allocate a PTY for the `btm` system monitor.
+
 ## [0.1.3] - 2026-08-25
 
 ### Added
@@ -54,7 +61,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/mengshi02/binport/releases/tag/v0.1.4
 [0.1.3]: https://github.com/mengshi02/binport/releases/tag/v0.1.3
 [0.1.2]: https://github.com/mengshi02/binport/releases/tag/v0.1.2
 [0.1.1]: https://github.com/mengshi02/binport/releases/tag/v0.1.1

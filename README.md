@@ -29,7 +29,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.3" \
+BINPORT_VERSION="v0.1.4" \
 sh install.sh
 ```
 
@@ -251,6 +251,8 @@ binport prod jq . /srv/app/config.json
 binport deploy@example.com fd '\.log$' /var/log
 binport server-a rg 'panic|fatal' /srv
 binport --password root@server-a rg timeout /var/log
+binport server-a btm               # PTY is selected automatically
+binport --tty server-a TOOL ...    # force a PTY for another interactive tool
 ```
 
 `HOST` can be `user@hostname` or an exact alias in `~/.ssh/config`:

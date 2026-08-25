@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.3" \
+BINPORT_VERSION="v0.1.4" \
 sh install.sh
 ```
 
@@ -47,7 +47,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.1.3 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.1.4 --locked
 ```
 
 ## 一次密码，长期免密
@@ -116,6 +116,8 @@ Host server-a
 
 ```console
 $ binport server-a rg "authentication timeout" /var/log
+$ binport server-a btm               # 自动分配 PTY
+$ binport --tty server-a TOOL ...    # 为其他交互工具强制分配 PTY
 /var/log/auth.log:42:authentication timeout upstream=identity
 ```
 
