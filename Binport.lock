@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "binfile_sha256": "6b8161b11fd349f3bbe4a2b91d4927292afa2d53a16296150f4e5a0ffce1618a",
+  "tools": [
+    {
+      "name": "rg",
+      "version": "15.2.0",
+      "platform": "linux/amd64",
+      "source": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "fd",
+      "version": "10.4.2",
+      "platform": "linux/amd64",
+      "source": "https://github.com/sharkdp/fd/releases/download/v10.4.2/fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "e3257d48e29a6be965187dbd24ce9af564e0fe67b3e73c9bdcd180f4ec11bdde",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "jq",
+      "version": "1.8.2",
+      "platform": "linux/amd64",
+      "source": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64",
+      "source_sha256": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f",
+      "archive": "binary"
+    },
+    {
+      "name": "rg",
+      "version": "15.2.0",
+      "platform": "linux/arm64",
+      "source": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "fd",
+      "version": "10.4.2",
+      "platform": "linux/arm64",
+      "source": "https://github.com/sharkdp/fd/releases/download/v10.4.2/fd-v10.4.2-aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "f32d3657473fba74e2600babc8db0b93420d51169223b7e8143b2ed55d8fd9e8",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "jq",
+      "version": "1.8.2",
+      "platform": "linux/arm64",
+      "source": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64",
+      "source_sha256": "8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309",
+      "archive": "binary"
+    }
+  ],
+  "copies": []
+}

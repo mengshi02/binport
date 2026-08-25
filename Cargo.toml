@@ -1,0 +1,30 @@
+[package]
+name = "binport"
+version = "0.1.0"
+edition = "2024"
+description = "Run local CLI tools on SSH hosts without installing them remotely"
+license = "MIT"
+repository = "https://github.com/mengshi02/binport"
+readme = "README.md"
+exclude = [".binport/", ".github/"]
+keywords = ["ssh", "cli", "remote", "devops"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+async-ssh2-tokio = "0.13"
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+rpassword = "7.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+
+[dev-dependencies]
+tempfile = "3.20"
+
+[profile.release]
+strip = true
+lto = "thin"

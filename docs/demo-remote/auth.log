@@ -1,0 +1,4 @@
+2026-08-25T07:10:11Z INFO session opened user=api
+2026-08-25T07:10:13Z WARN authentication timeout upstream=identity
+2026-08-25T07:10:14Z INFO retry scheduled attempt=2
+2026-08-25T07:10:16Z WARN authentication timeout upstream=identity

@@ -1,0 +1,7 @@
+# A portable toolbox for Linux servers.
+TARGET linux/amd64
+TARGET linux/arm64
+
+TOOL rg@15.2.0
+TOOL fd@10.4.2
+TOOL jq@1.8.2
