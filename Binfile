@@ -6,3 +6,8 @@ TOOL rg@15.2.0
 TOOL fd@10.4.2
 TOOL jq@1.8.2
 TOOL eza@0.23.5
+TOOL bat@0.26.1
+TOOL dust@1.2.5
+TOOL btm@0.14.8
+TOOL sd@1.1.0
+TOOL delta@0.19.2

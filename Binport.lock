@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "binfile_sha256": "ee6208ced42f9bd056c1929a6be799c7e463ef6af8c5dbc7043558e49e8ad763",
+  "binfile_sha256": "1742ce840b7515574618b35ee27a951d90c32f47b7f11432547cc31aa2a5dd5c",
   "tools": [
     {
       "name": "rg",
@@ -35,6 +35,46 @@
       "archive": "tar+gzip"
     },
     {
+      "name": "bat",
+      "version": "0.26.1",
+      "platform": "linux/amd64",
+      "source": "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "0dcd8ac79732c0d5b136f11f4ee00e581440e16a44eab5b3105b611bbf2cf191",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "dust",
+      "version": "1.2.5",
+      "platform": "linux/amd64",
+      "source": "https://github.com/bootandy/dust/releases/download/v1.2.5/dust-v1.2.5-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "79813b5743fab1e04c1d9c34042aab865dbe09efb76719e7c7d260568850fabc",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "btm",
+      "version": "0.14.8",
+      "platform": "linux/amd64",
+      "source": "https://github.com/ClementTsang/bottom/releases/download/0.14.8/bottom_x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "9d071c11a5b5bf266f05aa6519a43ad353330155d3d5627a750572d85ed19f54",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "sd",
+      "version": "1.1.0",
+      "platform": "linux/amd64",
+      "source": "https://github.com/chmln/sd/releases/download/v1.1.0/sd-v1.1.0-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "02f00f4777d43e8e95b7b8d49e1a0d6e502fed4b8e79c1c8b8063857a30caa2e",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "delta",
+      "version": "0.19.2",
+      "platform": "linux/amd64",
+      "source": "https://github.com/dandavison/delta/releases/download/0.19.2/delta-0.19.2-x86_64-unknown-linux-musl.tar.gz",
+      "source_sha256": "f1ea01ca7728ce3462debc359f39dfc7cbbc1a63224b71fefabf92042864aa1b",
+      "archive": "tar+gzip"
+    },
+    {
       "name": "rg",
       "version": "15.2.0",
       "platform": "linux/arm64",
@@ -64,6 +104,46 @@
       "platform": "linux/arm64",
       "source": "https://github.com/eza-community/eza/releases/download/v0.23.5/eza_aarch64-unknown-linux-gnu_no_libgit.tar.gz",
       "source_sha256": "1c01b578b5bd3f23b7de5a4b41936cde20fb16ff16a03e63266317ac1eb821e0",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "bat",
+      "version": "0.26.1",
+      "platform": "linux/arm64",
+      "source": "https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "6369242c584065f195fb20cb36fbd7cb63ae690605bbe89868a7596b596c2c23",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "dust",
+      "version": "1.2.5",
+      "platform": "linux/arm64",
+      "source": "https://github.com/bootandy/dust/releases/download/v1.2.5/dust-v1.2.5-aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "331b328233a70e56f0509ff962b2a6ea606eb2e654ce8a0e9a3bebe1bd54a2be",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "btm",
+      "version": "0.14.8",
+      "platform": "linux/arm64",
+      "source": "https://github.com/ClementTsang/bottom/releases/download/0.14.8/bottom_aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "cc6ad0527598fb45eff929ac168e0c93eb7c3cd604723876b9df9b487ac10a47",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "sd",
+      "version": "1.1.0",
+      "platform": "linux/arm64",
+      "source": "https://github.com/chmln/sd/releases/download/v1.1.0/sd-v1.1.0-aarch64-unknown-linux-musl.tar.gz",
+      "source_sha256": "ec8c93c0533ff21f4851d11566808d4082544baf063d9b96ea77c27e98b7cd99",
+      "archive": "tar+gzip"
+    },
+    {
+      "name": "delta",
+      "version": "0.19.2",
+      "platform": "linux/arm64",
+      "source": "https://github.com/dandavison/delta/releases/download/0.19.2/delta-0.19.2-aarch64-unknown-linux-gnu.tar.gz",
+      "source_sha256": "0bfce159a5cddd5feb3d6db4a616d883ff51253ce08ac7ec11cb1d208cfaab9e",
       "archive": "tar+gzip"
     }
   ],
