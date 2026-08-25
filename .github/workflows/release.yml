@@ -69,6 +69,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          & "target/${{ matrix.target }}/release/binport.exe" --version
           $package = "binport-${{ matrix.name }}"
           New-Item -ItemType Directory -Path $package | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/binport.exe" "$package/binport.exe"

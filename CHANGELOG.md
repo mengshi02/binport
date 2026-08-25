@@ -6,6 +6,8 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-25
+
 ### Added
 
 - Manage dedicated, per-host Ed25519 keys with `binport auth setup`, `status`,
@@ -39,5 +41,6 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mengshi02/binport/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mengshi02/binport/releases/tag/v0.1.0
