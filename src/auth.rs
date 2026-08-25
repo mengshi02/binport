@@ -55,6 +55,10 @@ pub fn managed_key_path(host: &str) -> io::Result<PathBuf> {
 
 pub fn ensure_managed_key(host: &str) -> io::Result<ManagedKey> {
     let private_path = managed_key_path(host)?;
+    ensure_managed_key_at(host, private_path)
+}
+
+fn ensure_managed_key_at(host: &str, private_path: PathBuf) -> io::Result<ManagedKey> {
     let public_path = public_path(&private_path);
     if private_path.is_file() && public_path.is_file() {
         return Ok(ManagedKey {
@@ -180,5 +184,26 @@ mod tests {
     fn remote_key_commands_do_not_interpolate_key_material() {
         assert!(install_key_command().contains("key=$(cat)"));
         assert!(remove_key_command().contains("key=$(cat)"));
+    }
+
+    #[test]
+    fn generates_a_reusable_ed25519_openssh_key_pair() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("managed");
+        let created = ensure_managed_key_at("demo", path.clone()).unwrap();
+        assert!(created.created);
+        assert_eq!(created.private_path, path);
+        assert!(created.public_key.starts_with("ssh-ed25519 "));
+        assert!(created.public_key.ends_with(" binport:demo"));
+        let encoded = fs::read_to_string(&created.private_path).unwrap();
+        let parsed = PrivateKey::from_openssh(&encoded).unwrap();
+        assert_eq!(
+            parsed.public_key().to_openssh().unwrap(),
+            created.public_key
+        );
+
+        let reused = ensure_managed_key_at("demo", created.private_path).unwrap();
+        assert!(!reused.created);
+        assert_eq!(reused.public_key, created.public_key);
     }
 }

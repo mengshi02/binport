@@ -276,8 +276,14 @@ fn auth_setup(host: &str, json: bool) -> io::Result<u8> {
     let mut destination = Destination::resolve(host)?;
     reject_auth_proxy_jump(&destination)?;
     let key = binport::auth::ensure_managed_key(host)?;
-    let password = rpassword::prompt_password("SSH password: ")?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    if !key.created {
+        destination.identity = Some(key.private_path.clone());
+        if managed_key_works(&runtime, &destination) {
+            return print_auth_ready(host, &key, "existing", json);
+        }
+    }
+    let password = rpassword::prompt_password("SSH password: ")?;
     let remote_state = runtime.block_on(async {
         let ssh = NativeSsh::connect(&destination, Some(&password)).await?;
         let (status, stdout, stderr) = ssh
@@ -303,6 +309,15 @@ fn auth_setup(host: &str, json: bool) -> io::Result<u8> {
         }
         Ok::<_, io::Error>(String::from_utf8_lossy(&stdout).trim().to_owned())
     })?;
+    print_auth_ready(host, &key, &remote_state, json)
+}
+
+fn print_auth_ready(
+    host: &str,
+    key: &binport::auth::ManagedKey,
+    remote_state: &str,
+    json: bool,
+) -> io::Result<u8> {
     if json {
         println!(
             "{}",
@@ -324,19 +339,23 @@ fn auth_setup(host: &str, json: bool) -> io::Result<u8> {
     Ok(0)
 }
 
+fn managed_key_works(runtime: &tokio::runtime::Runtime, destination: &Destination) -> bool {
+    runtime
+        .block_on(async {
+            let ssh = NativeSsh::connect(destination, None).await?;
+            let (status, _, _) = ssh.execute_capture("true").await?;
+            Ok::<_, io::Error>(status == 0)
+        })
+        .unwrap_or(false)
+}
+
 fn auth_status(host: &str, json: bool) -> io::Result<u8> {
     let (private_path, _) = binport::auth::read_managed_public_key(host)?;
     let mut destination = Destination::resolve(host)?;
     reject_auth_proxy_jump(&destination)?;
     destination.identity = Some(private_path.clone());
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
-    let ready = runtime
-        .block_on(async {
-            let ssh = NativeSsh::connect(&destination, None).await?;
-            let (status, _, _) = ssh.execute_capture("true").await?;
-            Ok::<_, io::Error>(status == 0)
-        })
-        .unwrap_or(false);
+    let ready = managed_key_works(&runtime, &destination);
     if json {
         println!(
             "{}",
