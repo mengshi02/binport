@@ -41,14 +41,21 @@ impl Destination {
             user: requested_user
                 .map(str::to_owned)
                 .or_else(|| env::var("USER").ok())
+                .or_else(|| env::var("USERNAME").ok())
                 .unwrap_or_else(|| "root".into()),
             identity: None,
             proxy_jump: None,
         };
-        if let Some(home) = env::var_os("HOME") {
-            let ssh_dir = PathBuf::from(&home).join(".ssh");
+        if let Some(home) = user_home() {
+            let ssh_dir = home.join(".ssh");
             if let Ok(source) = fs::read_to_string(ssh_dir.join("config")) {
                 apply_ssh_config(&source, alias, requested_user.is_none(), &mut destination);
+            }
+            if destination.identity.is_none() {
+                let managed = crate::auth::managed_key_path(value)?;
+                if managed.is_file() {
+                    destination.identity = Some(managed);
+                }
             }
             if destination.identity.is_none() {
                 for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
@@ -65,9 +72,13 @@ impl Destination {
 }
 
 pub fn select_hosts(group: &str) -> io::Result<Vec<String>> {
-    let home = env::var_os("HOME")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
-    let source = fs::read_to_string(PathBuf::from(home).join(".ssh/config"))?;
+    let home = user_home().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "user home directory is unavailable",
+        )
+    })?;
+    let source = fs::read_to_string(home.join(".ssh/config"))?;
     Ok(select_hosts_from_config(&source, group))
 }
 
@@ -330,8 +341,14 @@ fn apply_ssh_config(source: &str, alias: &str, allow_user: bool, destination: &m
 fn expand_home(value: &str) -> PathBuf {
     value
         .strip_prefix("~/")
-        .and_then(|suffix| env::var_os("HOME").map(|home| PathBuf::from(home).join(suffix)))
+        .and_then(|suffix| user_home().map(|home| home.join(suffix)))
         .unwrap_or_else(|| PathBuf::from(value))
+}
+
+fn user_home() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
 }
 
 #[cfg(test)]

@@ -31,15 +31,49 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.0" \
+BINPORT_VERSION="v0.1.1" \
 sh install.sh
 ```
+
+Windows amd64 用户可以在 PowerShell 中运行：
+
+```powershell
+irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
+```
+
+默认安装到 `%LOCALAPPDATA%\binport\bin`。如果该目录尚未加入用户 PATH，
+安装脚本会给出提示。
 
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.1.0 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.1.1 --locked
 ```
+
+## 一次密码，长期免密
+
+如果服务器目前使用密码登录，让 binport 原生生成并安装一把独立的
+Ed25519 Key：
+
+```console
+$ binport auth setup server-a
+SSH password:
+Passwordless authentication is ready for server-a
+
+$ binport server-a rg --version
+```
+
+密码只用于本次连接，不会持久化。binport 专用私钥保存在当前平台的用户
+配置目录中，与现有 SSH Key 隔离，并强制设置严格权限。重复 setup 不会
+重复追加远端公钥。
+
+```sh
+binport auth status server-a
+binport auth remove server-a
+```
+
+`remove` 会先精确删除远端对应的公钥行，再删除本地密钥。目前 auth 管理
+只支持直连主机；普通 Key/密码认证仍然可以通过一跳 ProxyJump 使用。
 
 ## 五分钟上手
 
@@ -91,6 +125,9 @@ $ binport server-a rg "authentication timeout" /var/log
 
 ```text
 binport resolve [PATH]             生成或更新 Binport.lock
+binport auth setup HOST            安装 binport 专用免密 SSH Key
+binport auth status HOST           验证专用 Key
+binport auth remove HOST           删除本地及远端专用 Key
 binport build [PATH]               构建 Binfile 中声明的工具箱
 binport ls [PATH]                  列出工具
 binport fetch TOOL...              预下载指定工具
@@ -208,8 +245,8 @@ binport pull oci://harbor.example.com/platform/ops:v1 \
 
 - 精选工具：`rg`、`fd`、`jq`
 - 远程目标：Linux amd64、Linux arm64
-- 本地客户端：Linux、macOS 的 amd64/arm64
-- SSH 认证：Agent、未加密私钥、交互式密码
+- 本地客户端：Linux、macOS 的 amd64/arm64，以及 Windows amd64
+- SSH 认证：Agent、未加密私钥、交互式密码、binport 管理的独立 Key
 - 支持一跳 ProxyJump；暂不支持多级跳板链和交互式 PTY
 - OCI 支持匿名和密码认证的 pull/push；暂不支持持久登录和自定义 CA
 

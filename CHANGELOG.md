@@ -6,6 +6,20 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Manage dedicated, per-host Ed25519 keys with `binport auth setup`, `status`,
+  and `remove` without persisting SSH passwords.
+- Run binport as a native Windows amd64 client, with a checksum-verifying
+  PowerShell installer and Windows release archive.
+
+### Changed
+
+- Discover binport-managed keys automatically and include an actionable auth
+  setup hint when key authentication fails.
+- Use native Windows configuration and cache directories when `HOME` is not
+  available.
+
 ## [0.1.0] - 2026-08-25
 
 ### Added

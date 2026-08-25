@@ -9,7 +9,7 @@ use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -47,6 +47,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CommandKind {
+    /// Set up and manage passwordless SSH authentication
+    Auth(AuthArgs),
     /// Resolve Binfile sources into Binport.lock
     Resolve(BuildArgs),
     /// Build a toolbox from a Binfile
@@ -83,6 +85,37 @@ enum CommandKind {
     /// Execute a toolbox tool on an SSH host
     #[command(external_subcommand)]
     Remote(Vec<OsString>),
+}
+
+#[derive(Debug, Args)]
+struct AuthArgs {
+    #[command(subcommand)]
+    command: AuthCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthCommand {
+    /// Generate a dedicated key and install it on a host
+    Setup(AuthHostArgs),
+    /// Verify the dedicated key for a host
+    Status(AuthHostArgs),
+    /// Remove the dedicated key locally and remotely
+    Remove(AuthRemoveArgs),
+}
+
+#[derive(Debug, Args)]
+struct AuthHostArgs {
+    /// Exact SSH config alias or user@host destination
+    host: String,
+}
+
+#[derive(Debug, Args)]
+struct AuthRemoveArgs {
+    /// Exact SSH config alias or user@host destination
+    host: String,
+    /// Skip the interactive confirmation
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -210,6 +243,7 @@ fn run(cli: Cli) -> io::Result<u8> {
     let concurrency = cli.concurrency;
     let json = cli.json;
     match cli.command {
+        CommandKind::Auth(args) => auth(args, json),
         CommandKind::Resolve(args) => resolve(args),
         CommandKind::Build(args) => build(args),
         CommandKind::Ls(args) => list(args),
@@ -228,6 +262,162 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Watch(args) => watch(args, use_password, concurrency, json),
         CommandKind::Remote(args) => remote(args, use_password, verbose, concurrency, json),
     }
+}
+
+fn auth(args: AuthArgs, json: bool) -> io::Result<u8> {
+    match args.command {
+        AuthCommand::Setup(args) => auth_setup(&args.host, json),
+        AuthCommand::Status(args) => auth_status(&args.host, json),
+        AuthCommand::Remove(args) => auth_remove(&args.host, args.yes, json),
+    }
+}
+
+fn auth_setup(host: &str, json: bool) -> io::Result<u8> {
+    let mut destination = Destination::resolve(host)?;
+    reject_auth_proxy_jump(&destination)?;
+    let key = binport::auth::ensure_managed_key(host)?;
+    let password = rpassword::prompt_password("SSH password: ")?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let remote_state = runtime.block_on(async {
+        let ssh = NativeSsh::connect(&destination, Some(&password)).await?;
+        let (status, stdout, stderr) = ssh
+            .execute_capture_with_input(
+                binport::auth::install_key_command(),
+                key.public_key.as_bytes().to_vec(),
+            )
+            .await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "remote key installation failed: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        destination.identity = Some(key.private_path.clone());
+        let verification = NativeSsh::connect(&destination, None).await?;
+        let (status, _, stderr) = verification.execute_capture("true").await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "key verification failed: {}",
+                stderr.trim()
+            )));
+        }
+        Ok::<_, io::Error>(String::from_utf8_lossy(&stdout).trim().to_owned())
+    })?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "host": host,
+                "ready": true,
+                "created": key.created,
+                "remote": remote_state,
+                "identity_file": key.private_path,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("Passwordless authentication is ready for {host}");
+        println!("Identity: {}", key.private_path.display());
+        println!();
+        println!("  binport {host} rg --version");
+    }
+    Ok(0)
+}
+
+fn auth_status(host: &str, json: bool) -> io::Result<u8> {
+    let (private_path, _) = binport::auth::read_managed_public_key(host)?;
+    let mut destination = Destination::resolve(host)?;
+    reject_auth_proxy_jump(&destination)?;
+    destination.identity = Some(private_path.clone());
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let ready = runtime
+        .block_on(async {
+            let ssh = NativeSsh::connect(&destination, None).await?;
+            let (status, _, _) = ssh.execute_capture("true").await?;
+            Ok::<_, io::Error>(status == 0)
+        })
+        .unwrap_or(false);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "host": host,
+                "ready": ready,
+                "identity_file": private_path,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else if ready {
+        println!("{host}: ready ({})", private_path.display());
+    } else {
+        println!("{host}: local key exists but remote authentication failed");
+    }
+    Ok(if ready { 0 } else { 1 })
+}
+
+fn auth_remove(host: &str, yes: bool, json: bool) -> io::Result<u8> {
+    let (private_path, public_key) = binport::auth::read_managed_public_key(host)?;
+    if !yes && !confirm_removal(host)? {
+        println!("Cancelled");
+        return Ok(0);
+    }
+    let mut destination = Destination::resolve(host)?;
+    reject_auth_proxy_jump(&destination)?;
+    destination.identity = Some(private_path);
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    runtime.block_on(async {
+        let ssh = NativeSsh::connect(&destination, None).await?;
+        let (status, _, stderr) = ssh
+            .execute_capture_with_input(
+                binport::auth::remove_key_command(),
+                public_key.as_bytes().to_vec(),
+            )
+            .await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "remote key removal failed: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        Ok::<_, io::Error>(())
+    })?;
+    binport::auth::remove_managed_key(host)?;
+    if json {
+        println!(
+            "{{\"host\":{},\"removed\":true}}",
+            serde_json::to_string(host).unwrap()
+        );
+    } else {
+        println!("Removed passwordless authentication for {host}");
+    }
+    Ok(0)
+}
+
+fn reject_auth_proxy_jump(destination: &Destination) -> io::Result<()> {
+    if destination.proxy_jump.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "auth management through ProxyJump is not supported yet",
+        ));
+    }
+    Ok(())
+}
+
+fn confirm_removal(host: &str) -> io::Result<bool> {
+    if !io::stdin().is_terminal() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "auth remove requires --yes when stdin is not interactive",
+        ));
+    }
+    print!("Remove binport authentication for {host}? [y/N] ");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }
 
 fn resolve(args: BuildArgs) -> io::Result<u8> {
@@ -740,7 +930,9 @@ fn remote(
         ));
     }
 
-    let outcome = runtime.block_on(remote_async(host, tool, &args[2..], password.as_deref()))?;
+    let outcome = runtime
+        .block_on(remote_async(host, tool, &args[2..], password.as_deref()))
+        .map_err(|error| authentication_hint(host, error))?;
     if json {
         println!(
             "{}",
@@ -750,6 +942,21 @@ fn remote(
         print_single(&outcome, verbose)?;
     }
     Ok(u8::try_from(outcome.status).unwrap_or(1))
+}
+
+fn authentication_hint(host: &str, error: io::Error) -> io::Error {
+    let message = error.to_string();
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("authentication") || lower.contains("no ssh agent or private key") {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "{message}; run `binport auth setup {host}` for passwordless access or retry with --password"
+            ),
+        )
+    } else {
+        error
+    }
 }
 
 #[derive(Debug)]

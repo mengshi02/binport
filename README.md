@@ -18,7 +18,7 @@ container runtime, package manager, or root access.
 
 ## Install
 
-Download the latest signed-by-checksum release for Linux or macOS:
+Download the latest checksum-verified release for Linux or macOS:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh | sh
@@ -29,9 +29,19 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.0" \
+BINPORT_VERSION="v0.1.1" \
 sh install.sh
 ```
+
+On Windows amd64, run in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
+```
+
+The Windows installer places `binport.exe` in
+`%LOCALAPPDATA%\binport\bin` by default and prints a reminder if that directory
+is not already in the user PATH.
 
 Air-gapped mirrors can set `BINPORT_RELEASE_URL` to a directory containing the
 platform archives and `SHA256SUMS`.
@@ -41,6 +51,33 @@ Build from source with a recent stable Rust toolchain:
 ```sh
 cargo install --path . --locked
 ```
+
+## Passwordless authentication
+
+If a host currently requires a password, let binport create and install a
+dedicated Ed25519 key:
+
+```console
+$ binport auth setup server-a
+SSH password:
+Passwordless authentication is ready for server-a
+
+$ binport server-a rg --version
+```
+
+The password is used for that connection only and is never persisted. The
+private key is stored with restrictive permissions under the platform's
+binport configuration directory, separate from existing SSH keys. Installation
+is idempotent.
+
+```sh
+binport auth status server-a
+binport auth remove server-a
+```
+
+`remove` deletes the exact managed public-key line remotely before deleting the
+local key. Auth management currently supports direct hosts; existing key and
+password authentication continue to work through one-hop ProxyJump.
 
 ## Binfile
 
@@ -85,6 +122,9 @@ a missing lock automatically.
 
 ```text
 binport resolve [PATH]            Resolve Binfile into Binport.lock
+binport auth setup HOST           Install a dedicated passwordless SSH key
+binport auth status HOST          Verify the managed key
+binport auth remove HOST          Remove the key locally and remotely
 binport build [PATH]              Build the Binfile
 binport ls [PATH]                 List declared tools (`list` is an alias)
 binport fetch TOOL...             Pre-download tools
@@ -413,12 +453,13 @@ not transfer the executable again.
 
 ## Current scope
 
-This is an early Linux-focused MVP:
+This is an early Linux-remote-focused release:
 
 - Curated tools: `rg`, `fd`, and `jq`.
 - Targets: Linux amd64 and Linux arm64.
+- Clients: Linux and macOS on amd64/arm64, plus Windows amd64.
 - Authentication: SSH agent, unencrypted private key, or an interactive
-  password prompt.
+  password prompt. Dedicated per-host keys can be managed with `binport auth`.
 - SSH config: exact host aliases plus `HostName`, `User`, `Port`, and
   `IdentityFile` (simple `Host *` defaults are supported).
 - Fleet groups: concrete SSH aliases selected by prefix, with bounded parallel

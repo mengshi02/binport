@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod binfile;
 pub mod catalog;
 pub mod lockfile;

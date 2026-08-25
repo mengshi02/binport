@@ -215,9 +215,20 @@ pub fn cache_root() -> io::Result<PathBuf> {
     if let Some(path) = env::var_os("XDG_CACHE_HOME") {
         return Ok(PathBuf::from(path).join("binport"));
     }
+    #[cfg(windows)]
+    if let Some(path) = dirs::cache_dir() {
+        return Ok(path.join("binport"));
+    }
     let home = env::var_os("HOME")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".cache/binport"))
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "user cache directory is unavailable",
+            )
+        })?;
+    Ok(home.join(".cache/binport"))
 }
 
 pub fn fetch_artifact(artifact: Artifact) -> io::Result<PathBuf> {
