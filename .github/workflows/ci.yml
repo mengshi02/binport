@@ -17,7 +17,7 @@ jobs:
     name: Format, lint, and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
@@ -30,4 +30,3 @@ jobs:
         run: cargo test --all-features --locked
       - name: Build release binary
         run: cargo build --release --locked
-
