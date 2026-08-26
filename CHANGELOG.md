@@ -23,6 +23,8 @@ All notable changes to binport are documented here. The format follows
   point and move the zero-connection `plan` command into its own module.
 - Move `doctor`, `warm`, and shared ProxyJump connection preparation into a
   dedicated fleet module while preserving command output and cache behavior.
+- Move the `watch` state machine, reconnect handling, and event rendering into
+  a dedicated command module backed by the shared fleet connection pool.
 
 ## [0.1.5] - 2026-08-26
 

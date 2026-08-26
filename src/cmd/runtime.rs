@@ -74,6 +74,16 @@ pub fn human_bytes(bytes: u64) -> String {
     }
 }
 
+pub fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
+    for line in text.lines() {
+        if stderr {
+            eprintln!("{host:width$}  {line}");
+        } else {
+            println!("{host:width$}  {line}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ad_hoc_route;

@@ -6,3 +6,4 @@ pub mod plan;
 pub mod registry;
 pub mod runtime;
 pub mod transfer;
+pub mod watch;
