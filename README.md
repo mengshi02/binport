@@ -149,6 +149,7 @@ binport warm HOST|@GROUP          Preload every missing toolbox artifact
 binport plan HOST|@GROUP TOOL     Preview hosts, routes, and artifacts offline
 binport watch [OPTIONS] HOST TOOL Repeatedly report command-result changes
 binport cp SOURCE DESTINATION      Copy a file over native SSH (HOST:PATH)
+binport rm HOST:PATH               Remove a remote file (`-r` for directories)
 binport HOST TOOL [ARGUMENTS]...  Execute a tool remotely
 binport @GROUP TOOL [ARGUMENTS]... Execute concurrently across a fleet
 ```
@@ -170,12 +171,18 @@ binport server-a edit /etc/myapp/config.toml
 binport cp ./config.toml server-a:/tmp/config.toml
 binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
+binport rm server-a:/tmp/a.txt
+binport rm --recursive server-a:/tmp/old-output
 ```
 
 Copies are streamed in bounded chunks and show bytes, throughput, and ETA on an
 interactive terminal. The same progress UI is used for catalog downloads and
 first-run remote tool uploads. Redirected output and `--json` automatically
 disable animated progress.
+
+`rm` requires `HOST:PATH`, rejects root/home/traversal forms such as `/`, `~`,
+and `..`, and requires `--recursive` before removing a directory. `--force`
+ignores a missing target.
 
 ## OCI toolbox artifacts
 

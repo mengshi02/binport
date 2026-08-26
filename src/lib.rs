@@ -5,6 +5,7 @@ pub mod lockfile;
 pub mod oci;
 pub mod progress;
 pub mod registry;
+pub mod remote_command;
 pub mod ssh;
 pub mod toolbox;
 

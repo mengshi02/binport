@@ -1,10 +1,11 @@
 use binport::catalog::{self, Platform};
 use binport::progress::TransferProgress;
+use binport::remote_command;
 use binport::ssh::{Destination, NativeSsh, SharedJump, StreamChunk, select_hosts};
 use binport::toolbox;
 use binport::{
     cache_check_command, execute_command, probe_execute_command, remote_paths, safe_tool_name,
-    sha256_file, shell_quote, upload_command,
+    sha256_file, upload_command,
 };
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -68,6 +69,8 @@ enum CommandKind {
     Status(ProjectArgs),
     /// Copy a file between local and remote paths
     Cp(CpArgs),
+    /// Remove a remote file or directory
+    Rm(RmArgs),
     /// Remove downloaded toolbox cache
     Clean,
     /// Export the built toolbox as one offline file
@@ -165,6 +168,18 @@ struct CpArgs {
     source: String,
     /// Local path or HOST:PATH
     destination: String,
+}
+
+#[derive(Debug, Args)]
+struct RmArgs {
+    /// Remote path in HOST:PATH form
+    target: String,
+    /// Remove directories and their contents
+    #[arg(short = 'r', long)]
+    recursive: bool,
+    /// Ignore a missing path
+    #[arg(short = 'f', long)]
+    force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -269,6 +284,7 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Fetch(args) => fetch(args),
         CommandKind::Status(args) => status(args),
         CommandKind::Cp(args) => copy_file(args, use_password, json),
+        CommandKind::Rm(args) => remove_remote(args, use_password, json),
         CommandKind::Clean => clean(),
         CommandKind::Export(args) => export(args),
         CommandKind::Load(args) => load(args),
@@ -1025,6 +1041,61 @@ fn copy_file(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
     Ok(0)
 }
 
+fn remove_remote(args: RmArgs, use_password: bool, json: bool) -> io::Result<u8> {
+    let target = remote_file(&args.target)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "rm requires a remote path in HOST:PATH form",
+        )
+    })?;
+    validate_remove_path(target.path)?;
+    let password = use_password
+        .then(|| rpassword::prompt_password("SSH password: "))
+        .transpose()?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let command = remote_command::remove(target.path, args.recursive, args.force)?;
+    let (status, _, stderr) = runtime.block_on(async {
+        connect_host(target.host, password.as_deref())
+            .await?
+            .execute_capture_with_input(&command, Vec::new())
+            .await
+    })?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "remote remove failed for {}: {}",
+            args.target,
+            String::from_utf8_lossy(&stderr).trim()
+        )));
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "target": args.target,
+                "recursive": args.recursive,
+                "ok": true,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("Removed {}", args.target);
+    }
+    Ok(0)
+}
+
+fn validate_remove_path(path: &str) -> io::Result<()> {
+    let trimmed = path.trim_end_matches('/');
+    if matches!(trimmed, "" | "." | ".." | "~" | "$HOME")
+        || trimmed.split('/').any(|component| component == "..")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to remove dangerous path {path:?}"),
+        ));
+    }
+    Ok(())
+}
+
 fn source_name(value: &str) -> io::Result<String> {
     let path = remote_file(value)?.map_or(value, |remote| remote.path);
     PathBuf::from(path)
@@ -1051,8 +1122,7 @@ async fn download_remote_file(
     show_progress: bool,
 ) -> io::Result<PathBuf> {
     let ssh = connect_host(source.host, password).await?;
-    let quoted_path = shell_quote(OsStr::new(source.path))?;
-    let size_command = format!("sh -c 'test -f \"$1\" || exit 66; wc -c <\"$1\"' sh {quoted_path}");
+    let size_command = remote_command::file_size(source.path)?;
     let (size_status, size_stdout, size_stderr) = ssh.execute_capture(&size_command).await?;
     if size_status != 0 {
         return Err(io::Error::other(format!(
@@ -1061,10 +1131,7 @@ async fn download_remote_file(
         )));
     }
     let total = size_stdout.trim().parse::<u64>().ok();
-    let command = format!(
-        "sh -c 'test -f \"$1\" || exit 66; exec cat -- \"$1\"' sh {}",
-        quoted_path
-    );
+    let command = remote_command::download_file(source.path)?;
     let temp = copy_temp_path();
     let progress = TransferProgress::new(
         format!("download {}:{}", source.host, source.path),
@@ -1098,11 +1165,7 @@ async fn upload_remote_file(
     show_progress: bool,
 ) -> io::Result<()> {
     let ssh = connect_host(destination.host, password).await?;
-    let command = format!(
-        "sh -c 'umask 077; dest=$1; case \"$dest\" in */) dest=${{dest%/}}/$2;; *) if [ -d \"$dest\" ]; then dest=$dest/$2; fi;; esac; dir=$(dirname -- \"$dest\") || exit; mkdir -p -- \"$dir\" || exit; tmp=$dest.binport-part.$$; trap '\"'\"'rm -f -- \"$tmp\"'\"'\"' EXIT HUP INT TERM; cat >\"$tmp\" && mv -f -- \"$tmp\" \"$dest\"; status=$?; trap - EXIT; exit $status' sh {} {}",
-        shell_quote(OsStr::new(destination.path))?,
-        shell_quote(OsStr::new(source_name))?
-    );
+    let command = remote_command::upload_file(destination.path, source_name)?;
     let total = fs::metadata(source)?.len();
     let progress = TransferProgress::new(
         format!("upload {}:{}", destination.host, destination.path),
@@ -2620,7 +2683,7 @@ fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ad_hoc_route, default_tool_arguments, remote_file};
+    use super::{ad_hoc_route, default_tool_arguments, remote_file, validate_remove_path};
     use std::ffi::{OsStr, OsString};
 
     #[test]
@@ -2641,6 +2704,14 @@ mod tests {
         assert_eq!(remote.path, "/var/log/app.log");
         assert!(remote_file(r"C:\temp\app.log").unwrap().is_none());
         assert!(remote_file("server-a:").is_err());
+    }
+
+    #[test]
+    fn refuses_dangerous_remote_remove_paths() {
+        for path in ["/", "////", ".", "..", "~", "$HOME/", "/tmp/../"] {
+            assert!(validate_remove_path(path).is_err(), "accepted {path:?}");
+        }
+        assert!(validate_remove_path("/tmp/binport-test").is_ok());
     }
 
     #[test]

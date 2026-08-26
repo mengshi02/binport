@@ -153,6 +153,7 @@ binport warm HOST|@GROUP           提前将缺失工具传输到远端
 binport plan HOST|@GROUP TOOL      离线预览主机、路由和工具选择
 binport watch HOST TOOL            持续观察命令结果变化
 binport cp 源 目标                  通过内置 SSH 复制文件（远端写作 HOST:PATH）
+binport rm HOST:PATH               删除远程文件（目录需要 `-r`）
 binport HOST TOOL [ARGS]...        在单台远程主机执行工具
 binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
 ```
@@ -173,11 +174,16 @@ binport server-a edit /etc/myapp/config.toml
 binport cp ./config.toml server-a:/tmp/config.toml
 binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
+binport rm server-a:/tmp/a.txt
+binport rm --recursive server-a:/tmp/old-output
 ```
 
 复制采用固定大小的分块流式传输；交互式终端会显示字节数、速度和 ETA。目录下载
 和首次上传远程工具复用同一套进度组件。输出被重定向或使用 `--json` 时会自动
 关闭动画，避免污染脚本输出。
+
+`rm` 只接受 `HOST:PATH`，会拒绝 `/`、`~`、`..` 等根目录、主目录或路径穿越
+形式；删除目录必须显式传入 `--recursive`，`--force` 可忽略目标不存在。
 
 ## Fleet 并发执行
 

@@ -14,6 +14,8 @@ All notable changes to binport are documented here. The format follows
 - Show traditional command mappings and descriptions in `binport ls`.
 - Add reusable terminal transfer progress with byte counts, throughput, and ETA
   for file copies, downloads, and first-run tool uploads.
+- Add guarded remote deletion with `binport rm HOST:PATH`, explicit recursive
+  directory removal, force mode, JSON output, and dangerous-path rejection.
 
 ### Changed
 
@@ -24,6 +26,8 @@ All notable changes to binport are documented here. The format follows
   operation.
 - Stream `binport cp` in bounded 64 KiB chunks instead of buffering complete
   files in memory.
+- Move file-operation shell command construction out of `main.rs` into a tested
+  remote command module.
 
 ## [0.1.4] - 2026-08-25
 
