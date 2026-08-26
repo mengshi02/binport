@@ -26,6 +26,18 @@
 
 **工具箱只构建一次，在任意 SSH 主机上直接运行，远端无需安装。**
 
+> **v0.1.5 新功能——不用再手写 ProxyJump。** 两条命令添加跳板机及其后的
+> 目标机，binport 会生成标准、可复用的 SSH 别名，OpenSSH、rsync 和编辑器
+> 插件也能直接使用。
+
+```console
+$ binport host add jump root@203.0.113.10
+$ binport host add app-01 root@10.0.0.52 --jump jump
+$ binport host test app-01
+✓ Route      jump → app-01
+✓ Platform   linux/amd64
+```
+
 ![binport 终端演示](docs/demo.svg)
 
 ```console
@@ -53,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.4" \
+BINPORT_VERSION="v0.1.5" \
 sh install.sh
 ```
 
@@ -69,7 +81,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.1.4 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.1.5 --locked
 ```
 
 ## 不用手写 SSH Config

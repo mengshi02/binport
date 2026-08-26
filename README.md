@@ -26,6 +26,18 @@
 
 **Build a toolbox once. Run it on any SSH host. Install nothing there.**
 
+> **New in v0.1.5 — stop hand-writing ProxyJump config.** Add a direct host and
+> a machine behind it in two commands; binport creates standard, reusable SSH
+> aliases for itself, OpenSSH, rsync, and editor integrations.
+
+```console
+$ binport host add jump root@203.0.113.10
+$ binport host add app-01 root@10.0.0.52 --jump jump
+$ binport host test app-01
+✓ Route      jump → app-01
+✓ Platform   linux/amd64
+```
+
 ![binport terminal demo](docs/demo.svg)
 
 ```console
@@ -51,7 +63,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.4" \
+BINPORT_VERSION="v0.1.5" \
 sh install.sh
 ```
 

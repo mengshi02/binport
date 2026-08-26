@@ -6,6 +6,8 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-26
+
 ### Added
 
 - Add `micro` and the `edit` alias for interactive remote file editing.
@@ -89,7 +91,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/mengshi02/binport/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/mengshi02/binport/releases/tag/v0.1.4
 [0.1.3]: https://github.com/mengshi02/binport/releases/tag/v0.1.3
 [0.1.2]: https://github.com/mengshi02/binport/releases/tag/v0.1.2
