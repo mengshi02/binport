@@ -74,7 +74,39 @@ pub const TOOLS: &[(&str, &str)] = &[
     ("btm", "0.14.8"),
     ("sd", "1.1.0"),
     ("delta", "0.19.2"),
+    ("micro", "2.0.15"),
 ];
+
+pub fn replacement(tool: &str) -> &'static str {
+    match tool {
+        "rg" => "grep",
+        "fd" => "find",
+        "eza" => "ls",
+        "bat" => "cat",
+        "dust" => "du",
+        "btm" => "top",
+        "sd" => "sed",
+        "delta" => "diff",
+        "micro" => "edit",
+        _ => "-",
+    }
+}
+
+pub fn description(tool: &str) -> &'static str {
+    match tool {
+        "rg" => "recursive text search",
+        "fd" => "filesystem search",
+        "jq" => "JSON processor",
+        "eza" => "directory listing",
+        "bat" => "file viewer",
+        "dust" => "disk usage",
+        "btm" => "system monitor",
+        "sd" => "find and replace",
+        "delta" => "syntax-aware diff",
+        "micro" => "terminal editor",
+        _ => "custom tool",
+    }
+}
 
 pub fn artifact(tool: &str, version: Option<&str>, platform: Platform) -> Option<Artifact> {
     let entry = ARTIFACTS
@@ -229,6 +261,22 @@ const ARTIFACTS: &[Artifact] = &[
         platform: Platform::LinuxArm64,
         url: "https://github.com/dandavison/delta/releases/download/0.19.2/delta-0.19.2-aarch64-unknown-linux-gnu.tar.gz",
         sha256: "0bfce159a5cddd5feb3d6db4a616d883ff51253ce08ac7ec11cb1d208cfaab9e",
+        archive: Archive::TarGz,
+    },
+    Artifact {
+        tool: "micro",
+        version: "2.0.15",
+        platform: Platform::LinuxAmd64,
+        url: "https://github.com/micro-editor/micro/releases/download/v2.0.15/micro-2.0.15-linux64-static.tar.gz",
+        sha256: "267d238eac1e26ed053d13d4d48bd421b87f9eb538b604f0b2f74a85598b6cc2",
+        archive: Archive::TarGz,
+    },
+    Artifact {
+        tool: "micro",
+        version: "2.0.15",
+        platform: Platform::LinuxArm64,
+        url: "https://github.com/micro-editor/micro/releases/download/v2.0.15/micro-2.0.15-linux-arm64.tar.gz",
+        sha256: "5ca127857bf5500be3879f1a70b27556e737a49da04a1be5334de9e8e8781ad9",
         archive: Archive::TarGz,
     },
 ];

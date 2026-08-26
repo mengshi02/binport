@@ -3,7 +3,7 @@ use binport::ssh::{Destination, NativeSsh, SharedJump, StreamChunk, select_hosts
 use binport::toolbox;
 use binport::{
     cache_check_command, execute_command, probe_execute_command, remote_paths, safe_tool_name,
-    sha256_file, upload_command,
+    sha256_file, shell_quote, upload_command,
 };
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -64,6 +64,8 @@ enum CommandKind {
     Fetch(FetchArgs),
     /// Show toolbox and cache status
     Status(ProjectArgs),
+    /// Copy a file between local and remote paths
+    Cp(CpArgs),
     /// Remove downloaded toolbox cache
     Clean,
     /// Export the built toolbox as one offline file
@@ -153,6 +155,14 @@ struct TransferArgs {
     /// Project containing .binport
     #[arg(long, default_value = ".")]
     path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct CpArgs {
+    /// Local path or HOST:PATH
+    source: String,
+    /// Local path or HOST:PATH
+    destination: String,
 }
 
 #[derive(Debug, Args)]
@@ -254,6 +264,7 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Ls(args) => list(args),
         CommandKind::Fetch(args) => fetch(args),
         CommandKind::Status(args) => status(args),
+        CommandKind::Cp(args) => copy_file(args, use_password, json),
         CommandKind::Clean => clean(),
         CommandKind::Export(args) => export(args),
         CommandKind::Load(args) => load(args),
@@ -656,7 +667,7 @@ fn build(args: BuildArgs) -> io::Result<u8> {
 
 fn list(args: ProjectArgs) -> io::Result<u8> {
     let binfile = args.path.join("Binfile");
-    println!("TOOL\tVERSION\tPLATFORMS");
+    println!("TOOL\tREPLACES\tDESCRIPTION\tVERSION\tPLATFORMS");
     if binfile.is_file() {
         let spec = binport::binfile::Binfile::read(&binfile)?;
         let platforms = spec
@@ -673,10 +684,21 @@ fn list(args: ProjectArgs) -> io::Result<u8> {
                     .map(|(_, version)| (*version).to_owned())
                     .unwrap_or_else(|| "latest".into())
             });
-            println!("{}\t{}\t{}", tool.name, version, platforms);
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                tool.name,
+                catalog::replacement(&tool.name),
+                catalog::description(&tool.name),
+                version,
+                platforms
+            );
         }
         for copy in spec.copies {
-            println!("{}\tlocal\t{}", copy.name, copy.platform.name());
+            println!(
+                "{}\t-\tcustom tool\tlocal\t{}",
+                copy.name,
+                copy.platform.name()
+            );
         }
     } else {
         let lock: toolbox::Lockfile =
@@ -691,7 +713,12 @@ fn list(args: ProjectArgs) -> io::Result<u8> {
         }
         for ((name, version), mut platforms) in tools {
             platforms.sort();
-            println!("{name}\t{version}\t{}", platforms.join(", "));
+            println!(
+                "{name}\t{}\t{}\t{version}\t{}",
+                catalog::replacement(&name),
+                catalog::description(&name),
+                platforms.join(", ")
+            );
         }
     }
     Ok(0)
@@ -905,6 +932,168 @@ fn registry_credentials(
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct RemoteFile<'a> {
+    host: &'a str,
+    path: &'a str,
+}
+
+fn remote_file(value: &str) -> io::Result<Option<RemoteFile<'_>>> {
+    let Some((host, path)) = value.split_once(':') else {
+        return Ok(None);
+    };
+    if host.len() == 1 && host.as_bytes()[0].is_ascii_alphabetic() {
+        return Ok(None);
+    }
+    if host.is_empty() || path.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "remote paths use HOST:PATH with a non-empty host and path",
+        ));
+    }
+    Ok(Some(RemoteFile { host, path }))
+}
+
+fn copy_file(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
+    let source = remote_file(&args.source)?;
+    let destination = remote_file(&args.destination)?;
+    if source.is_none() && destination.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "at least one cp path must use HOST:PATH",
+        ));
+    }
+    let password = use_password
+        .then(|| rpassword::prompt_password("SSH password: "))
+        .transpose()?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let bytes = match source {
+        Some(source) => runtime.block_on(download_remote_file(&source, password.as_deref()))?,
+        None => {
+            let path = PathBuf::from(&args.source);
+            if !path.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not a regular file", path.display()),
+                ));
+            }
+            fs::read(path)?
+        }
+    };
+    let byte_count = bytes.len();
+    match destination {
+        Some(destination) => {
+            let name = source_name(&args.source)?;
+            runtime.block_on(upload_remote_file(
+                &destination,
+                &name,
+                bytes,
+                password.as_deref(),
+            ))?;
+        }
+        None => write_local_file(&args.destination, &args.source, &bytes)?,
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source": args.source,
+                "destination": args.destination,
+                "bytes": byte_count,
+                "ok": true,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!(
+            "Copied {} bytes: {} -> {}",
+            byte_count, args.source, args.destination
+        );
+    }
+    Ok(0)
+}
+
+fn source_name(value: &str) -> io::Result<String> {
+    let path = remote_file(value)?.map_or(value, |remote| remote.path);
+    PathBuf::from(path)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "source has no file name"))
+}
+
+async fn connect_host(host: &str, password: Option<&str>) -> io::Result<NativeSsh> {
+    if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
+        let jump = NativeSsh::connect_jump(jump_host, password).await?;
+        let destination = Destination::resolve(target_host)?;
+        NativeSsh::connect_with_jump(&destination, password, &jump).await
+    } else {
+        NativeSsh::connect(&Destination::resolve(host)?, password).await
+    }
+}
+
+async fn download_remote_file(
+    source: &RemoteFile<'_>,
+    password: Option<&str>,
+) -> io::Result<Vec<u8>> {
+    let ssh = connect_host(source.host, password).await?;
+    let command = format!(
+        "sh -c 'test -f \"$1\" || exit 66; exec cat -- \"$1\"' sh {}",
+        shell_quote(OsStr::new(source.path))?
+    );
+    let (status, stdout, stderr) = ssh.execute_capture_with_input(&command, Vec::new()).await?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "remote read failed for {}:{}: {}",
+            source.host,
+            source.path,
+            String::from_utf8_lossy(&stderr)
+        )));
+    }
+    Ok(stdout)
+}
+
+async fn upload_remote_file(
+    destination: &RemoteFile<'_>,
+    source_name: &str,
+    bytes: Vec<u8>,
+    password: Option<&str>,
+) -> io::Result<()> {
+    let ssh = connect_host(destination.host, password).await?;
+    let command = format!(
+        "sh -c 'umask 077; dest=$1; case \"$dest\" in */) dest=${{dest%/}}/$2;; *) if [ -d \"$dest\" ]; then dest=$dest/$2; fi;; esac; dir=$(dirname -- \"$dest\") || exit; mkdir -p -- \"$dir\" || exit; tmp=$dest.binport-part.$$; trap '\"'\"'rm -f -- \"$tmp\"'\"'\"' EXIT HUP INT TERM; cat >\"$tmp\" && mv -f -- \"$tmp\" \"$dest\"; status=$?; trap - EXIT; exit $status' sh {} {}",
+        shell_quote(OsStr::new(destination.path))?,
+        shell_quote(OsStr::new(source_name))?
+    );
+    let (status, _, stderr) = ssh.execute_capture_with_input(&command, bytes).await?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "remote write failed for {}:{}: {}",
+            destination.host,
+            destination.path,
+            String::from_utf8_lossy(&stderr)
+        )));
+    }
+    Ok(())
+}
+
+fn write_local_file(destination: &str, source: &str, bytes: &[u8]) -> io::Result<()> {
+    let mut path = PathBuf::from(destination);
+    if path.is_dir() || destination.ends_with(std::path::MAIN_SEPARATOR) {
+        path.push(source_name(source)?);
+    }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let temp = path.with_extension(format!("binport-part-{}", std::process::id()));
+    fs::write(&temp, bytes)?;
+    fs::rename(temp, path)
+}
+
 fn remote(
     args: Vec<OsString>,
     use_password: bool,
@@ -920,7 +1109,13 @@ fn remote(
         ));
     }
     let host = &args[0];
-    let tool = &args[1];
+    let requested_tool = &args[1];
+    let tool = if requested_tool == OsStr::new("edit") {
+        OsString::from("micro")
+    } else {
+        requested_tool.to_owned()
+    };
+    let arguments = default_tool_arguments(&tool, &args[2..]);
     let host = host
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "host is not valid UTF-8"))?;
@@ -930,7 +1125,7 @@ fn remote(
         None
     };
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
-    let tty = tty || tool == OsStr::new("btm");
+    let tty = tty || matches!(tool.to_str(), Some("btm" | "micro"));
     if let Some(group) = host.strip_prefix('@') {
         if tty {
             return Err(io::Error::new(
@@ -953,8 +1148,8 @@ fn remote(
         }
         return runtime.block_on(fleet_async(
             hosts,
-            tool.to_owned(),
-            args[2..].to_vec(),
+            tool,
+            arguments,
             password,
             verbose,
             concurrency,
@@ -972,8 +1167,8 @@ fn remote(
         return runtime
             .block_on(remote_tty_async(
                 host,
-                tool,
-                &args[2..],
+                &tool,
+                &arguments,
                 password.as_deref(),
             ))
             .map(|status| u8::try_from(status).unwrap_or(1))
@@ -981,7 +1176,7 @@ fn remote(
     }
 
     let outcome = runtime
-        .block_on(remote_async(host, tool, &args[2..], password.as_deref()))
+        .block_on(remote_async(host, &tool, &arguments, password.as_deref()))
         .map_err(|error| authentication_hint(host, error))?;
     if json {
         println!(
@@ -992,6 +1187,35 @@ fn remote(
         print_single(&outcome, verbose)?;
     }
     Ok(u8::try_from(outcome.status).unwrap_or(1))
+}
+
+fn default_tool_arguments(tool: &OsStr, arguments: &[OsString]) -> Vec<OsString> {
+    if tool != OsStr::new("eza") {
+        return arguments.to_vec();
+    }
+    let mut defaults = Vec::new();
+    let has_layout = arguments.iter().any(|argument| {
+        matches!(
+            argument.to_str(),
+            Some("-l" | "--long" | "-1" | "--oneline" | "-G" | "--grid" | "-T" | "--tree")
+        )
+    });
+    let has_color = arguments.iter().any(|argument| {
+        argument.to_str().is_some_and(|value| {
+            value == "--color"
+                || value == "--colour"
+                || value.starts_with("--color=")
+                || value.starts_with("--colour=")
+        })
+    });
+    if !has_layout {
+        defaults.push(OsString::from("--long"));
+    }
+    if !has_color {
+        defaults.push(OsString::from("--color=always"));
+    }
+    defaults.extend_from_slice(arguments);
+    defaults
 }
 
 async fn remote_tty_async(
@@ -2340,7 +2564,8 @@ fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::ad_hoc_route;
+    use super::{ad_hoc_route, default_tool_arguments, remote_file};
+    use std::ffi::{OsStr, OsString};
 
     #[test]
     fn parses_exactly_one_ad_hoc_jump() {
@@ -2351,5 +2576,31 @@ mod tests {
         assert_eq!(ad_hoc_route("server-a").unwrap(), None);
         assert!(ad_hoc_route("jump-a,server-a,server-b").is_err());
         assert!(ad_hoc_route("jump-a,").is_err());
+    }
+
+    #[test]
+    fn distinguishes_remote_paths_from_windows_drives() {
+        let remote = remote_file("server-a:/var/log/app.log").unwrap().unwrap();
+        assert_eq!(remote.host, "server-a");
+        assert_eq!(remote.path, "/var/log/app.log");
+        assert!(remote_file(r"C:\temp\app.log").unwrap().is_none());
+        assert!(remote_file("server-a:").is_err());
+    }
+
+    #[test]
+    fn gives_eza_human_friendly_defaults_without_overriding_choices() {
+        assert_eq!(
+            default_tool_arguments(OsStr::new("eza"), &[OsString::from("/export")]),
+            ["--long", "--color=always", "/export"]
+                .map(OsString::from)
+                .to_vec()
+        );
+        assert_eq!(
+            default_tool_arguments(
+                OsStr::new("eza"),
+                &[OsString::from("--tree"), OsString::from("--color=never")]
+            ),
+            ["--tree", "--color=never"].map(OsString::from).to_vec()
+        );
     }
 }

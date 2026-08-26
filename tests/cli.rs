@@ -17,7 +17,7 @@ fn lists_a_binfile_with_the_short_top_level_command() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "TOOL\tVERSION\tPLATFORMS\nrg\t15.2.0\tlinux/amd64\n"
+        "TOOL\tREPLACES\tDESCRIPTION\tVERSION\tPLATFORMS\nrg\tgrep\trecursive text search\t15.2.0\tlinux/amd64\n"
     );
 }
 
@@ -30,7 +30,8 @@ fn exposes_fleet_lifecycle_commands() {
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     for command in [
-        "auth", "resolve", "pack", "unpack", "pull", "push", "doctor", "warm", "plan", "watch",
+        "auth", "resolve", "cp", "pack", "unpack", "pull", "push", "doctor", "warm", "plan",
+        "watch",
     ] {
         assert!(help.contains(command), "help is missing {command}");
     }

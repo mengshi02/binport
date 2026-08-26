@@ -147,8 +147,27 @@ binport doctor HOST|@GROUP         检查连接、平台、延迟与缓存
 binport warm HOST|@GROUP           提前将缺失工具传输到远端
 binport plan HOST|@GROUP TOOL      离线预览主机、路由和工具选择
 binport watch HOST TOOL            持续观察命令结果变化
+binport cp 源 目标                  通过内置 SSH 复制文件（远端写作 HOST:PATH）
 binport HOST TOOL [ARGS]...        在单台远程主机执行工具
 binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
+```
+
+工具列表会展示现代命令与传统命令的对应关系及用途。远程执行 `eza` 时默认
+启用长格式和 ANSI 色彩；用户显式传入的布局、色彩参数优先：
+
+```sh
+binport ls
+binport server-a eza /export
+```
+
+可以用内置的 `micro` 编辑远程文件（自动分配 PTY），也可以直接通过 Rust
+SSH 通道复制普通文件，全程不启动外部 `ssh`/`scp` 进程：
+
+```sh
+binport server-a edit /etc/myapp/config.toml
+binport cp ./config.toml server-a:/tmp/config.toml
+binport cp server-a:/var/log/app.log ./app.log
+binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
 ```
 
 ## Fleet 并发执行
@@ -247,8 +266,8 @@ binport pull oci://harbor.example.com/platform/ops:v1 \
 ## 当前范围
 
 - 精选工具：`rg`、`fd`、`jq`、`eza`、`bat`、`dust`、`btm`（bottom）、
-  `sd`、`delta`。Linux amd64 产物均为静态版本；`eza` 和 `delta` 的上游
-  arm64 产物依赖 glibc。
+  `sd`、`delta`、`micro`。Linux amd64 产物均为静态版本；`eza` 和 `delta`
+  的上游 arm64 产物依赖 glibc。
 - 远程目标：Linux amd64、Linux arm64
 - 本地客户端：Linux、macOS 的 amd64/arm64，以及 Windows amd64
 - SSH 认证：Agent、未加密私钥、交互式密码、binport 管理的独立 Key

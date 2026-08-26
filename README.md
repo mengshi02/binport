@@ -141,8 +141,28 @@ binport doctor HOST|@GROUP        Check routes, platforms, latency, and cache
 binport warm HOST|@GROUP          Preload every missing toolbox artifact
 binport plan HOST|@GROUP TOOL     Preview hosts, routes, and artifacts offline
 binport watch [OPTIONS] HOST TOOL Repeatedly report command-result changes
+binport cp SOURCE DESTINATION      Copy a file over native SSH (HOST:PATH)
 binport HOST TOOL [ARGUMENTS]...  Execute a tool remotely
 binport @GROUP TOOL [ARGUMENTS]... Execute concurrently across a fleet
+```
+
+Tool listings include the traditional command each curated tool replaces and a
+short description. Remote `eza` defaults to long format and ANSI color, while
+explicit `eza` layout/color flags still take precedence:
+
+```sh
+binport ls
+binport server-a eza /export
+```
+
+Edit a remote file with the bundled `micro` editor (PTY is automatic), or copy
+regular files without invoking external `ssh`/`scp` processes:
+
+```sh
+binport server-a edit /etc/myapp/config.toml
+binport cp ./config.toml server-a:/tmp/config.toml
+binport cp server-a:/var/log/app.log ./app.log
+binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
 ```
 
 ## OCI toolbox artifacts
@@ -459,8 +479,8 @@ not transfer the executable again.
 This is an early Linux-remote-focused release:
 
 - Curated tools: `rg`, `fd`, `jq`, `eza`, `bat`, `dust`, `btm` (bottom),
-  `sd`, and `delta`. The Linux amd64 artifacts are static; the upstream arm64
-  artifacts for `eza` and `delta` require glibc.
+  `sd`, `delta`, and `micro`. The Linux amd64 artifacts are static; the upstream
+  arm64 artifacts for `eza` and `delta` require glibc.
 - Targets: Linux amd64 and Linux arm64.
 - Clients: Linux and macOS on amd64/arm64, plus Windows amd64.
 - Authentication: SSH agent, unencrypted private key, or an interactive

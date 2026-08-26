@@ -247,8 +247,8 @@ impl NativeSsh {
                     break;
                 }
                 let input = buffer[..read].to_vec();
-                let quits =
-                    input == [3] || (eof_on_quit && matches!(input.as_slice(), [b'q'] | [b'Q']));
+                let quits = matches!(input.as_slice(), [3] | [4] | [17])
+                    || (eof_on_quit && matches!(input.as_slice(), [b'q'] | [b'Q']));
                 if input_tx.send(input).await.is_err() {
                     break;
                 }

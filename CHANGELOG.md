@@ -6,6 +6,18 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add `micro` and the `edit` alias for interactive remote file editing.
+- Add native-SSH `binport cp` for local-to-remote, remote-to-local, and
+  remote-to-remote regular-file copies.
+- Show traditional command mappings and descriptions in `binport ls`.
+
+### Changed
+
+- Give remote `eza` human-friendly long-format and color defaults without
+  overriding explicit user options.
+
 ## [0.1.4] - 2026-08-25
 
 ### Added
