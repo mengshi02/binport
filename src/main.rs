@@ -1,4 +1,5 @@
 use binport::catalog::{self, Platform};
+use binport::progress::TransferProgress;
 use binport::ssh::{Destination, NativeSsh, SharedJump, StreamChunk, select_hosts};
 use binport::toolbox;
 use binport::{
@@ -13,6 +14,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
@@ -242,7 +244,9 @@ struct WatchArgs {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    binport::progress::set_enabled(!cli.json);
+    match run(cli) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("binport: {error}");
@@ -967,8 +971,11 @@ fn copy_file(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
         .then(|| rpassword::prompt_password("SSH password: "))
         .transpose()?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
-    let bytes = match source {
-        Some(source) => runtime.block_on(download_remote_file(&source, password.as_deref()))?,
+    let (source_path, remove_source) = match source {
+        Some(source) => (
+            runtime.block_on(download_remote_file(&source, password.as_deref(), !json))?,
+            true,
+        ),
         None => {
             let path = PathBuf::from(&args.source);
             if !path.is_file() {
@@ -977,22 +984,27 @@ fn copy_file(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
                     format!("{} is not a regular file", path.display()),
                 ));
             }
-            fs::read(path)?
+            (path, false)
         }
     };
-    let byte_count = bytes.len();
-    match destination {
+    let byte_count = fs::metadata(&source_path)?.len();
+    let result = match destination {
         Some(destination) => {
             let name = source_name(&args.source)?;
             runtime.block_on(upload_remote_file(
                 &destination,
                 &name,
-                bytes,
+                &source_path,
                 password.as_deref(),
-            ))?;
+                !json,
+            ))
         }
-        None => write_local_file(&args.destination, &args.source, &bytes)?,
+        None => write_local_file(&args.destination, &args.source, &source_path),
+    };
+    if remove_source {
+        let _ = fs::remove_file(&source_path);
     }
+    result?;
     if json {
         println!(
             "{}",
@@ -1036,14 +1048,38 @@ async fn connect_host(host: &str, password: Option<&str>) -> io::Result<NativeSs
 async fn download_remote_file(
     source: &RemoteFile<'_>,
     password: Option<&str>,
-) -> io::Result<Vec<u8>> {
+    show_progress: bool,
+) -> io::Result<PathBuf> {
     let ssh = connect_host(source.host, password).await?;
+    let quoted_path = shell_quote(OsStr::new(source.path))?;
+    let size_command = format!("sh -c 'test -f \"$1\" || exit 66; wc -c <\"$1\"' sh {quoted_path}");
+    let (size_status, size_stdout, size_stderr) = ssh.execute_capture(&size_command).await?;
+    if size_status != 0 {
+        return Err(io::Error::other(format!(
+            "remote read failed for {}:{}: {}",
+            source.host, source.path, size_stderr
+        )));
+    }
+    let total = size_stdout.trim().parse::<u64>().ok();
     let command = format!(
         "sh -c 'test -f \"$1\" || exit 66; exec cat -- \"$1\"' sh {}",
-        shell_quote(OsStr::new(source.path))?
+        quoted_path
     );
-    let (status, stdout, stderr) = ssh.execute_capture_with_input(&command, Vec::new()).await?;
+    let temp = copy_temp_path();
+    let progress = TransferProgress::new(
+        format!("download {}:{}", source.host, source.path),
+        total,
+        show_progress,
+    );
+    let (status, stderr) = match ssh.download_file(&command, &temp, progress).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+    };
     if status != 0 {
+        let _ = fs::remove_file(&temp);
         return Err(io::Error::other(format!(
             "remote read failed for {}:{}: {}",
             source.host,
@@ -1051,14 +1087,15 @@ async fn download_remote_file(
             String::from_utf8_lossy(&stderr)
         )));
     }
-    Ok(stdout)
+    Ok(temp)
 }
 
 async fn upload_remote_file(
     destination: &RemoteFile<'_>,
     source_name: &str,
-    bytes: Vec<u8>,
+    source: &std::path::Path,
     password: Option<&str>,
+    show_progress: bool,
 ) -> io::Result<()> {
     let ssh = connect_host(destination.host, password).await?;
     let command = format!(
@@ -1066,7 +1103,13 @@ async fn upload_remote_file(
         shell_quote(OsStr::new(destination.path))?,
         shell_quote(OsStr::new(source_name))?
     );
-    let (status, _, stderr) = ssh.execute_capture_with_input(&command, bytes).await?;
+    let total = fs::metadata(source)?.len();
+    let progress = TransferProgress::new(
+        format!("upload {}:{}", destination.host, destination.path),
+        Some(total),
+        show_progress,
+    );
+    let (status, stderr) = ssh.upload_file(&command, source, progress).await?;
     if status != 0 {
         return Err(io::Error::other(format!(
             "remote write failed for {}:{}: {}",
@@ -1078,7 +1121,7 @@ async fn upload_remote_file(
     Ok(())
 }
 
-fn write_local_file(destination: &str, source: &str, bytes: &[u8]) -> io::Result<()> {
+fn write_local_file(destination: &str, source: &str, input: &std::path::Path) -> io::Result<()> {
     let mut path = PathBuf::from(destination);
     if path.is_dir() || destination.ends_with(std::path::MAIN_SEPARATOR) {
         path.push(source_name(source)?);
@@ -1090,8 +1133,17 @@ fn write_local_file(destination: &str, source: &str, bytes: &[u8]) -> io::Result
         fs::create_dir_all(parent)?;
     }
     let temp = path.with_extension(format!("binport-part-{}", std::process::id()));
-    fs::write(&temp, bytes)?;
+    fs::copy(input, &temp)?;
     fs::rename(temp, path)
+}
+
+fn copy_temp_path() -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "binport-cp-{}-{}.part",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 fn remote(
@@ -1265,18 +1317,7 @@ async fn remote_tty_async(
         .execute_capture(&cache_check_command(&candidate.remote_file))
         .await?;
     if cached != 0 {
-        let (uploaded, _, upload_error) = ssh
-            .execute_capture_with_input(
-                &upload_command(&candidate.directory, &candidate.remote_file),
-                fs::read(&candidate.local_path)?,
-            )
-            .await?;
-        if uploaded != 0 {
-            return Err(io::Error::other(format!(
-                "tool upload failed: {}",
-                String::from_utf8_lossy(&upload_error)
-            )));
-        }
+        upload_tool(&ssh, candidate, true).await?;
     }
     ssh.execute_tty(
         &execute_command(&candidate.remote_file, arguments)?,
@@ -1488,24 +1529,39 @@ async fn run_remote(
         .iter()
         .find(|candidate| candidate.platform == platform)
         .ok_or_else(|| io::Error::other("bootstrap selected a missing toolbox artifact"))?;
-    {
-        let (uploaded, _, upload_error) = ssh
-            .execute_capture_with_input(
-                &upload_command(&candidate.directory, &candidate.remote_file),
-                fs::read(&candidate.local_path)?,
-            )
-            .await?;
-        if uploaded != 0 {
-            return Err(io::Error::other(format!(
-                "tool upload failed: {}",
-                String::from_utf8_lossy(&upload_error)
-            )));
-        }
-    }
+    upload_tool(ssh, candidate, true).await?;
     let (status, stdout, stderr) = ssh
         .execute_capture(&execute_command(&candidate.remote_file, arguments)?)
         .await?;
     Ok((status, stdout, stderr, platform, false))
+}
+
+async fn upload_tool(
+    ssh: &NativeSsh,
+    candidate: &ToolCandidate,
+    show_progress: bool,
+) -> io::Result<()> {
+    let total = fs::metadata(&candidate.local_path)?.len();
+    let label = candidate
+        .local_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .map_or_else(|| "tool".to_owned(), |name| format!("upload {name}"));
+    let progress = TransferProgress::new(label, Some(total), show_progress);
+    let (status, stderr) = ssh
+        .upload_file(
+            &upload_command(&candidate.directory, &candidate.remote_file),
+            &candidate.local_path,
+            progress,
+        )
+        .await?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "tool upload failed: {}",
+            String::from_utf8_lossy(&stderr)
+        )));
+    }
+    Ok(())
 }
 
 async fn remote_destination_stream_async(

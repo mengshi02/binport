@@ -172,6 +172,11 @@ binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
 ```
 
+Copies are streamed in bounded chunks and show bytes, throughput, and ETA on an
+interactive terminal. The same progress UI is used for catalog downloads and
+first-run remote tool uploads. Redirected output and `--json` automatically
+disable animated progress.
+
 ## OCI toolbox artifacts
 
 A built toolbox can be represented as a standard local OCI image layout before

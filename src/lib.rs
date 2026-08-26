@@ -3,6 +3,7 @@ pub mod binfile;
 pub mod catalog;
 pub mod lockfile;
 pub mod oci;
+pub mod progress;
 pub mod registry;
 pub mod ssh;
 pub mod toolbox;

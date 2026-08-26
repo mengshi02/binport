@@ -12,6 +12,8 @@ All notable changes to binport are documented here. The format follows
 - Add native-SSH `binport cp` for local-to-remote, remote-to-local, and
   remote-to-remote regular-file copies.
 - Show traditional command mappings and descriptions in `binport ls`.
+- Add reusable terminal transfer progress with byte counts, throughput, and ETA
+  for file copies, downloads, and first-run tool uploads.
 
 ### Changed
 
@@ -20,6 +22,8 @@ All notable changes to binport are documented here. The format follows
 - Move the curated tool metadata from Rust source into a strictly validated,
   compile-time embedded `catalog.yaml` while preserving offline single-binary
   operation.
+- Stream `binport cp` in bounded 64 KiB chunks instead of buffering complete
+  files in memory.
 
 ## [0.1.4] - 2026-08-25
 

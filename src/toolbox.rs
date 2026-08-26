@@ -1,12 +1,13 @@
 use crate::catalog::{self, Archive, Artifact, Platform};
 use crate::lockfile::{self, ProjectLock, ResolvedTool};
+use crate::progress::TransferProgress;
 use crate::{safe_tool_name, sha256_file};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
 
@@ -294,12 +295,34 @@ fn fetch_source(
         version,
         platform.name()
     );
-    let response = reqwest::blocking::get(url)
+    let mut response = reqwest::blocking::get(url)
         .map_err(io::Error::other)?
         .error_for_status()
         .map_err(io::Error::other)?;
-    let bytes = response.bytes().map_err(io::Error::other)?;
-    let archive_hash = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let progress = TransferProgress::new(
+        format!("fetch {tool}@{version}"),
+        response.content_length(),
+        true,
+    );
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .and_then(|size| usize::try_from(size).ok())
+            .unwrap_or(0),
+    );
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = response.read(&mut buffer).map_err(io::Error::other)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        bytes.extend_from_slice(&buffer[..read]);
+        progress.inc(read);
+    }
+    progress.finish();
+    let archive_hash = format!("{:x}", hasher.finalize());
     if archive_hash != expected_sha256 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

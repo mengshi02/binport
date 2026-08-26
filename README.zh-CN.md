@@ -175,6 +175,10 @@ binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
 ```
 
+复制采用固定大小的分块流式传输；交互式终端会显示字节数、速度和 ETA。目录下载
+和首次上传远程工具复用同一套进度组件。输出被重定向或使用 `--json` 时会自动
+关闭动画，避免污染脚本输出。
+
 ## Fleet 并发执行
 
 binport 使用 SSH config 中的具体 Host 别名组成 Fleet。`@prod` 会选择
