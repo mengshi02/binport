@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod binfile;
 pub mod catalog;
+pub mod host;
 pub mod lockfile;
 pub mod oci;
 pub mod progress;

@@ -53,6 +53,9 @@ impl Destination {
             if let Ok(source) = fs::read_to_string(ssh_dir.join("config")) {
                 apply_ssh_config(&source, alias, requested_user.is_none(), &mut destination);
             }
+            if let Ok(source) = fs::read_to_string(ssh_dir.join(crate::host::MANAGED_CONFIG_NAME)) {
+                apply_ssh_config(&source, alias, requested_user.is_none(), &mut destination);
+            }
             if destination.identity.is_none() {
                 let managed = crate::auth::managed_key_path(value)?;
                 if managed.is_file() {
@@ -80,7 +83,12 @@ pub fn select_hosts(group: &str) -> io::Result<Vec<String>> {
             "user home directory is unavailable",
         )
     })?;
-    let source = fs::read_to_string(home.join(".ssh/config"))?;
+    let ssh_dir = home.join(".ssh");
+    let mut source = fs::read_to_string(ssh_dir.join("config"))?;
+    if let Ok(managed) = fs::read_to_string(ssh_dir.join(crate::host::MANAGED_CONFIG_NAME)) {
+        source.push('\n');
+        source.push_str(&managed);
+    }
     Ok(select_hosts_from_config(&source, group))
 }
 
@@ -152,7 +160,8 @@ impl NativeSsh {
 
     pub async fn connect(destination: &Destination, password: Option<&str>) -> io::Result<Self> {
         if let Some(proxy) = &destination.proxy_jump {
-            let jump = Self::connect_jump(proxy, password).await?;
+            // `password` belongs to the target. The jump host uses its own key or agent.
+            let jump = Self::connect_jump(proxy, None).await?;
             return Self::connect_with_jump(destination, password, &jump).await;
         }
 

@@ -9,6 +9,7 @@ use binport::{
 };
 use clap::{Args, Parser, Subcommand};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -56,6 +57,8 @@ struct Cli {
 enum CommandKind {
     /// Set up and manage passwordless SSH authentication
     Auth(AuthArgs),
+    /// Add and manage reusable SSH hosts and jump routes
+    Host(HostArgs),
     /// Resolve Binfile sources into Binport.lock
     Resolve(BuildArgs),
     /// Build a toolbox from a Binfile
@@ -102,6 +105,46 @@ enum CommandKind {
 struct AuthArgs {
     #[command(subcommand)]
     command: AuthCommand,
+}
+
+#[derive(Debug, Args)]
+struct HostArgs {
+    #[command(subcommand)]
+    command: HostCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum HostCommand {
+    /// Add a host or update one with --force
+    Add(HostAddArgs),
+    /// List hosts managed by binport
+    Ls,
+    /// Show one managed host
+    Show(AuthHostArgs),
+    /// Test connection, route, and remote platform
+    Test(AuthHostArgs),
+    /// Remove one managed host
+    Remove(AuthHostArgs),
+}
+
+#[derive(Debug, Args)]
+struct HostAddArgs {
+    /// Alias used in binport and SSH commands
+    name: String,
+    /// Hostname, IP address, or USER@HOST
+    destination: String,
+    /// SSH username (overrides USER@HOST)
+    #[arg(long)]
+    user: Option<String>,
+    /// SSH port
+    #[arg(long, default_value_t = 22)]
+    port: u16,
+    /// Existing SSH alias used as ProxyJump
+    #[arg(long)]
+    jump: Option<String>,
+    /// Update an existing binport-managed alias
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -278,6 +321,7 @@ fn run(cli: Cli) -> io::Result<u8> {
     let tty = cli.tty;
     match cli.command {
         CommandKind::Auth(args) => auth(args, json),
+        CommandKind::Host(args) => host(args, use_password, json),
         CommandKind::Resolve(args) => resolve(args),
         CommandKind::Build(args) => build(args),
         CommandKind::Ls(args) => list(args),
@@ -308,9 +352,203 @@ fn auth(args: AuthArgs, json: bool) -> io::Result<u8> {
     }
 }
 
+fn host(args: HostArgs, use_password: bool, json: bool) -> io::Result<u8> {
+    match args.command {
+        HostCommand::Add(args) => host_add(args, json),
+        HostCommand::Ls => host_list(json),
+        HostCommand::Show(args) => host_show(&args.host, json),
+        HostCommand::Test(args) => host_test(&args.host, use_password, json),
+        HostCommand::Remove(args) => host_remove(&args.host, json),
+    }
+}
+
+fn host_add(args: HostAddArgs, json: bool) -> io::Result<u8> {
+    if args.port == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SSH port must be greater than zero",
+        ));
+    }
+    let (destination_user, hostname) = args
+        .destination
+        .split_once('@')
+        .map_or((None, args.destination.as_str()), |(user, host)| {
+            (Some(user), host)
+        });
+    let user = args
+        .user
+        .as_deref()
+        .or(destination_user)
+        .map(str::to_owned)
+        .or_else(|| env::var("USER").ok())
+        .or_else(|| env::var("USERNAME").ok())
+        .unwrap_or_else(|| "root".into());
+    let entry = binport::host::HostEntry {
+        name: args.name,
+        hostname: hostname.to_owned(),
+        user,
+        port: args.port,
+        proxy_jump: args.jump,
+    };
+    binport::host::add(entry.clone(), args.force)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&host_json(&entry)).map_err(io::Error::other)?
+        );
+    } else {
+        println!("Added SSH host {}", entry.name);
+        println!(
+            "Config: {}",
+            binport::host::managed_config_path()?.display()
+        );
+        println!();
+        println!("  binport host test {}", entry.name);
+        println!("  binport {} rg --version", entry.name);
+    }
+    Ok(0)
+}
+
+fn host_list(json: bool) -> io::Result<u8> {
+    let entries = binport::host::list()?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &entries
+                    .iter()
+                    .map(host_json)
+                    .collect::<Vec<serde_json::Value>>()
+            )
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("HOST\tDESTINATION\tROUTE");
+        for entry in entries {
+            println!(
+                "{}\t{}@{}:{}\t{}",
+                entry.name,
+                entry.user,
+                entry.hostname,
+                entry.port,
+                entry.proxy_jump.as_deref().unwrap_or("direct")
+            );
+        }
+    }
+    Ok(0)
+}
+
+fn host_show(name: &str, json: bool) -> io::Result<u8> {
+    let entry = binport::host::find(name)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("host {name:?} is not managed by binport"),
+        )
+    })?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&host_json(&entry)).map_err(io::Error::other)?
+        );
+    } else {
+        println!("Host: {}", entry.name);
+        println!(
+            "Destination: {}@{}:{}",
+            entry.user, entry.hostname, entry.port
+        );
+        println!("Route: {}", entry.proxy_jump.as_deref().unwrap_or("direct"));
+        println!(
+            "Config: {}",
+            binport::host::managed_config_path()?.display()
+        );
+    }
+    Ok(0)
+}
+
+fn host_remove(name: &str, json: bool) -> io::Result<u8> {
+    if !binport::host::remove(name)? {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("host {name:?} is not managed by binport"),
+        ));
+    }
+    if json {
+        println!(
+            "{{\"host\":{},\"removed\":true}}",
+            serde_json::to_string(name).unwrap()
+        );
+    } else {
+        println!("Removed SSH host {name}");
+    }
+    Ok(0)
+}
+
+fn host_test(name: &str, use_password: bool, json: bool) -> io::Result<u8> {
+    let destination = Destination::resolve(name)?;
+    let password = use_password
+        .then(|| rpassword::prompt_password("SSH password: "))
+        .transpose()?;
+    let started = Instant::now();
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let (status, stdout, stderr) = runtime.block_on(async {
+        NativeSsh::connect(&destination, password.as_deref())
+            .await?
+            .execute_capture("uname -s; uname -m")
+            .await
+    })?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "host test failed: {}",
+            stderr.trim()
+        )));
+    }
+    let mut lines = stdout.lines();
+    let os = lines.next().unwrap_or_default();
+    let arch = lines.next().unwrap_or_default();
+    let platform = Platform::from_uname(os, arch)
+        .map(Platform::name)
+        .unwrap_or("unsupported");
+    let latency_ms = started.elapsed().as_millis();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "host": name,
+                "destination": format!("{}@{}:{}", destination.user, destination.hostname, destination.port),
+                "proxy_jump": destination.proxy_jump,
+                "platform": platform,
+                "latency_ms": latency_ms,
+                "ok": true,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("✓ Host       {name}");
+        println!(
+            "✓ Route      {}",
+            destination
+                .proxy_jump
+                .as_deref()
+                .map_or_else(|| "direct".to_owned(), |jump| format!("{jump} → {name}"))
+        );
+        println!("✓ Platform   {platform}");
+        println!("✓ Latency    {latency_ms} ms");
+    }
+    Ok(0)
+}
+
+fn host_json(entry: &binport::host::HostEntry) -> serde_json::Value {
+    serde_json::json!({
+        "host": entry.name,
+        "hostname": entry.hostname,
+        "user": entry.user,
+        "port": entry.port,
+        "proxy_jump": entry.proxy_jump,
+    })
+}
+
 fn auth_setup(host: &str, json: bool) -> io::Result<u8> {
     let mut destination = Destination::resolve(host)?;
-    reject_auth_proxy_jump(&destination)?;
     let key = binport::auth::ensure_managed_key(host)?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     if !key.created {
@@ -388,7 +626,6 @@ fn managed_key_works(runtime: &tokio::runtime::Runtime, destination: &Destinatio
 fn auth_status(host: &str, json: bool) -> io::Result<u8> {
     let (private_path, _) = binport::auth::read_managed_public_key(host)?;
     let mut destination = Destination::resolve(host)?;
-    reject_auth_proxy_jump(&destination)?;
     destination.identity = Some(private_path.clone());
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let ready = managed_key_works(&runtime, &destination);
@@ -417,7 +654,6 @@ fn auth_remove(host: &str, yes: bool, json: bool) -> io::Result<u8> {
         return Ok(0);
     }
     let mut destination = Destination::resolve(host)?;
-    reject_auth_proxy_jump(&destination)?;
     destination.identity = Some(private_path);
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     runtime.block_on(async {
@@ -446,16 +682,6 @@ fn auth_remove(host: &str, yes: bool, json: bool) -> io::Result<u8> {
         println!("Removed passwordless authentication for {host}");
     }
     Ok(0)
-}
-
-fn reject_auth_proxy_jump(destination: &Destination) -> io::Result<()> {
-    if destination.proxy_jump.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "auth management through ProxyJump is not supported yet",
-        ));
-    }
-    Ok(())
 }
 
 fn confirm_removal(host: &str) -> io::Result<bool> {

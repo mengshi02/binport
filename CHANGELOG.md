@@ -16,6 +16,10 @@ All notable changes to binport are documented here. The format follows
   for file copies, downloads, and first-run tool uploads.
 - Add guarded remote deletion with `binport rm HOST:PATH`, explicit recursive
   directory removal, force mode, JSON output, and dangerous-path rejection.
+- Add `binport host add|ls|show|test|remove` backed by a standard managed SSH
+  config fragment, including one-hop ProxyJump routes and conflict protection.
+- Support managed-key authentication setup, status, and removal through a
+  key-authenticated one-hop ProxyJump.
 
 ### Changed
 

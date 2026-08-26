@@ -30,8 +30,8 @@ fn exposes_fleet_lifecycle_commands() {
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     for command in [
-        "auth", "resolve", "cp", "rm", "pack", "unpack", "pull", "push", "doctor", "warm", "plan",
-        "watch",
+        "auth", "host", "resolve", "cp", "rm", "pack", "unpack", "pull", "push", "doctor", "warm",
+        "plan", "watch",
     ] {
         assert!(help.contains(command), "help is missing {command}");
     }

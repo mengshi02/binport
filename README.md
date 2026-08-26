@@ -74,6 +74,30 @@ Build from source with a recent stable Rust toolchain:
 cargo install --path . --locked
 ```
 
+## Host aliases without editing SSH config
+
+Add direct hosts and one-hop routes with a small CLI instead of writing
+`ProxyJump` blocks by hand:
+
+```sh
+binport host add jumpserver-51 root@203.0.113.10
+binport host add app-01 root@10.0.0.52 --jump jumpserver-51
+
+binport host ls
+binport host show app-01
+binport host test app-01
+```
+
+Binport writes standard SSH syntax to `~/.ssh/binport_config` and adds one
+`Include ~/.ssh/binport_config` line to `~/.ssh/config`. Consequently the same
+aliases work with `ssh`, `scp`, rsync, and editor SSH integrations. Existing
+handwritten host blocks are never overwritten; use `--force` only to update an
+alias already managed by binport.
+
+```sh
+binport host remove app-01
+```
+
 ## Passwordless authentication
 
 If a host currently requires a password, let binport create and install a
@@ -98,8 +122,8 @@ binport auth remove server-a
 ```
 
 `remove` deletes the exact managed public-key line remotely before deleting the
-local key. Auth management currently supports direct hosts; existing key and
-password authentication continue to work through one-hop ProxyJump.
+local key. Authentication setup, status, and removal support one-hop ProxyJump;
+the jump host must already be accessible with a key or SSH agent.
 
 ## Binfile
 
@@ -151,6 +175,7 @@ each project.
 
 ```text
 binport resolve [PATH]            Resolve Binfile into Binport.lock
+binport host add|ls|show|test|remove Manage SSH hosts and jump routes
 binport auth setup HOST           Install a dedicated passwordless SSH key
 binport auth status HOST          Verify the managed key
 binport auth remove HOST          Remove the key locally and remotely
@@ -526,13 +551,13 @@ This is an early Linux-remote-focused release:
 - Clients: Linux and macOS on amd64/arm64, plus Windows amd64.
 - Authentication: SSH agent, unencrypted private key, or an interactive
   password prompt. Dedicated per-host keys can be managed with `binport auth`.
-- SSH config: exact host aliases plus `HostName`, `User`, `Port`, and
-  `IdentityFile` (simple `Host *` defaults are supported).
+- SSH config: exact host aliases plus `HostName`, `User`, `Port`, `IdentityFile`,
+  and a binport-managed standard SSH config fragment.
 - Fleet groups: concrete SSH aliases selected by prefix, with bounded parallel
   execution (`--concurrency`, default 10) and a per-host result summary.
 - One-hop `ProxyJump` is supported. Comma-separated/nested jump chains,
-  interactive PTYs, encrypted private-key prompts, and remote cache cleanup are
-  not implemented yet.
+  encrypted private-key prompts, and remote cache cleanup are not implemented
+  yet.
 - Registry support covers anonymous and password-authenticated OCI pull,
   incremental push, and local OCI pack/unpack. Persistent login and custom CAs
   are not implemented yet.

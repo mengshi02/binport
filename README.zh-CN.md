@@ -72,6 +72,28 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 cargo install --git https://github.com/mengshi02/binport --tag v0.1.4 --locked
 ```
 
+## 不用手写 SSH Config
+
+通过简洁命令添加直连主机和一跳路由，不必手写 `ProxyJump`：
+
+```sh
+binport host add jumpserver-51 root@203.0.113.10
+binport host add app-01 root@10.0.0.52 --jump jumpserver-51
+
+binport host ls
+binport host show app-01
+binport host test app-01
+```
+
+binport 使用标准 SSH 语法写入 `~/.ssh/binport_config`，并仅在
+`~/.ssh/config` 中加入一行 `Include ~/.ssh/binport_config`。因此同一别名也
+可以用于 `ssh`、`scp`、rsync 和编辑器的 SSH 插件。已有的手写 Host 不会被
+覆盖；只有更新 binport 已管理的别名时才使用 `--force`。
+
+```sh
+binport host remove app-01
+```
+
 ## 一次密码，长期免密
 
 如果服务器目前使用密码登录，让 binport 原生生成并安装一把独立的
@@ -94,8 +116,8 @@ binport auth status server-a
 binport auth remove server-a
 ```
 
-`remove` 会先精确删除远端对应的公钥行，再删除本地密钥。目前 auth 管理
-只支持直连主机；普通 Key/密码认证仍然可以通过一跳 ProxyJump 使用。
+`remove` 会先精确删除远端对应的公钥行，再删除本地密钥。认证安装、状态检查
+和删除均支持一跳 ProxyJump；跳板机本身需要已经可以通过 Key 或 Agent 登录。
 
 ## 五分钟上手
 
@@ -155,6 +177,7 @@ $ binport jump-a,server-a btm        # 临时经过 jump-a，在 server-a 上执
 
 ```text
 binport resolve [PATH]             生成或更新 Binport.lock
+binport host add|ls|show|test|remove 管理 SSH 主机和跳板路由
 binport auth setup HOST            安装 binport 专用免密 SSH Key
 binport auth status HOST           验证专用 Key
 binport auth remove HOST           删除本地及远端专用 Key
@@ -308,7 +331,7 @@ binport pull oci://harbor.example.com/platform/ops:v1 \
 - 远程目标：Linux amd64、Linux arm64
 - 本地客户端：Linux、macOS 的 amd64/arm64，以及 Windows amd64
 - SSH 认证：Agent、未加密私钥、交互式密码、binport 管理的独立 Key
-- 支持一跳 ProxyJump；暂不支持多级跳板链和交互式 PTY
+- 支持一跳 ProxyJump 和交互式 PTY；暂不支持多级跳板链
 - OCI 支持匿名和密码认证的 pull/push；暂不支持持久登录和自定义 CA
 
 这是早期版本。如果你的场景需要新的工具、平台或 SSH 行为，欢迎提交 Issue。
