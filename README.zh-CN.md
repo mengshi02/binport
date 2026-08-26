@@ -2,6 +2,28 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/mengshi02/binport/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mengshi02/binport/actions/workflows/ci.yml)
+[![Release](https://github.com/mengshi02/binport/actions/workflows/release.yml/badge.svg)](https://github.com/mengshi02/binport/actions/workflows/release.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/mengshi02/binport?display_name=tag&sort=semver)](https://github.com/mengshi02/binport/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/mengshi02/binport/total)](https://github.com/mengshi02/binport/releases)
+[![License](https://img.shields.io/github/license/mengshi02/binport)](LICENSE)
+
+[![Stars](https://img.shields.io/github/stars/mengshi02/binport?style=flat)](https://github.com/mengshi02/binport/stargazers)
+[![Forks](https://img.shields.io/github/forks/mengshi02/binport?style=flat)](https://github.com/mengshi02/binport/forks)
+[![Issues](https://img.shields.io/github/issues/mengshi02/binport)](https://github.com/mengshi02/binport/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/mengshi02/binport)](https://github.com/mengshi02/binport/pulls)
+[![Contributors](https://img.shields.io/github/contributors/mengshi02/binport)](https://github.com/mengshi02/binport/graphs/contributors)
+[![Last Commit](https://img.shields.io/github/last-commit/mengshi02/binport/main)](https://github.com/mengshi02/binport/commits/main)
+
+![Rust](https://img.shields.io/badge/Rust-2024_Edition-000000?logo=rust)
+![Linux](https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-FCC624?logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-amd64%20%7C%20arm64-000000?logo=apple)
+![Windows](https://img.shields.io/badge/Windows-amd64-0078D4?logo=windows)
+![Native SSH](https://img.shields.io/badge/SSH-native_Rust-4D4D4D?logo=gnubash&logoColor=white)
+![No Agent](https://img.shields.io/badge/remote_agent-not_required-2ea44f)
+![Repository Size](https://img.shields.io/github/repo-size/mengshi02/binport)
+![Code Size](https://img.shields.io/github/languages/code-size/mengshi02/binport)
+
 **工具箱只构建一次，在任意 SSH 主机上直接运行，远端无需安装。**
 
 ![binport 终端演示](docs/demo.svg)
