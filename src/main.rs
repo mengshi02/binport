@@ -12,7 +12,11 @@ use clap::{Args, Parser, Subcommand};
 use cmd::auth::AuthArgs;
 use cmd::host::HostArgs;
 use cmd::lifecycle::{BuildArgs, FetchArgs, ProjectArgs, TransferArgs};
+use cmd::plan::PlanArgs;
 use cmd::registry::{PullArgs, PushArgs};
+use cmd::runtime::{
+    ToolCandidate, ad_hoc_route, human_bytes, toolbox_all_candidates, toolbox_candidates,
+};
 use cmd::transfer::{CpArgs, RmArgs};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
@@ -112,14 +116,6 @@ struct DoctorArgs {
 }
 
 #[derive(Debug, Args)]
-struct PlanArgs {
-    /// SSH host, @group, or @all
-    target: String,
-    /// Toolbox tool to inspect
-    tool: OsString,
-}
-
-#[derive(Debug, Args)]
 struct WatchArgs {
     /// Seconds between snapshots
     #[arg(long, default_value_t = 5)]
@@ -182,92 +178,10 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Push(args) => cmd::registry::push(args),
         CommandKind::Doctor(args) => doctor(args, use_password, concurrency, json),
         CommandKind::Warm(args) => warm(args, use_password, concurrency, json),
-        CommandKind::Plan(args) => plan(args, json),
+        CommandKind::Plan(args) => cmd::plan::run(args, json),
         CommandKind::Watch(args) => watch(args, use_password, concurrency, json),
         CommandKind::Remote(args) => remote(args, use_password, verbose, concurrency, json, tty),
     }
-}
-
-fn plan(args: PlanArgs, json: bool) -> io::Result<u8> {
-    let hosts = if let Some(group) = args.target.strip_prefix('@') {
-        select_hosts(group)?
-    } else {
-        vec![args.target]
-    };
-    if hosts.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "no concrete SSH hosts matched",
-        ));
-    }
-    let candidates = toolbox_candidates(&args.tool)?;
-    if candidates.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "tool {:?} is not built; run `binport build` first",
-                args.tool
-            ),
-        ));
-    }
-    let destinations = hosts
-        .iter()
-        .map(|host| Destination::resolve(host).map(|destination| (host, destination)))
-        .collect::<io::Result<Vec<_>>>()?;
-    if json {
-        let hosts = destinations
-            .iter()
-            .map(|(host, destination)| {
-                serde_json::json!({
-                    "host": host,
-                    "destination": format!("{}@{}:{}", destination.user, destination.hostname, destination.port),
-                    "proxy_jump": destination.proxy_jump,
-                })
-            })
-            .collect::<Vec<_>>();
-        let artifacts = candidates
-            .iter()
-            .map(|candidate| {
-                Ok(serde_json::json!({
-                    "platform": candidate.platform.name(),
-                    "local_path": candidate.local_path,
-                    "size_bytes": fs::metadata(&candidate.local_path)?.len(),
-                    "remote_path": candidate.remote_file,
-                }))
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "network_connections": 0,
-                "hosts": hosts,
-                "artifacts": artifacts,
-            }))
-            .map_err(io::Error::other)?
-        );
-    } else {
-        println!("HOST\tDESTINATION\tROUTE");
-        for (host, destination) in destinations {
-            println!(
-                "{host}\t{}@{}:{}\t{}",
-                destination.user,
-                destination.hostname,
-                destination.port,
-                destination.proxy_jump.as_deref().unwrap_or("direct")
-            );
-        }
-        println!("\nARTIFACT\tSIZE\tREMOTE CACHE PATH");
-        for candidate in candidates {
-            println!(
-                "{}\t{}\t{}",
-                candidate.platform.name(),
-                human_bytes(fs::metadata(&candidate.local_path)?.len()),
-                candidate.remote_file
-            );
-        }
-        println!("\nPlan only · no network connections made");
-    }
-    Ok(0)
 }
 
 fn doctor(args: DoctorArgs, use_password: bool, concurrency: usize, json: bool) -> io::Result<u8> {
@@ -595,51 +509,6 @@ fn remote_json(host: &str, outcome: &RemoteOutcome) -> serde_json::Value {
     })
 }
 
-#[derive(Clone, Debug)]
-struct ToolCandidate {
-    name: String,
-    platform: Platform,
-    local_path: PathBuf,
-    directory: String,
-    remote_file: String,
-}
-
-fn toolbox_candidates(tool: &OsStr) -> io::Result<Vec<ToolCandidate>> {
-    let tool = tool.to_str().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "tool name is not valid UTF-8")
-    })?;
-    Ok(toolbox_all_candidates()?
-        .into_iter()
-        .filter(|candidate| candidate.name == tool)
-        .collect())
-}
-
-fn toolbox_all_candidates() -> io::Result<Vec<ToolCandidate>> {
-    let lock: toolbox::Lockfile =
-        serde_json::from_slice(&fs::read(".binport/toolbox.json")?).map_err(io::Error::other)?;
-    lock.tools
-        .into_iter()
-        .map(|entry| {
-            let platform = Platform::parse(&entry.platform).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unsupported platform {} in toolbox", entry.platform),
-                )
-            })?;
-            let local_path = PathBuf::from(entry.path);
-            let name = safe_tool_name(&local_path)?;
-            let (directory, remote_file) = remote_paths(&sha256_file(&local_path)?, &name);
-            Ok(ToolCandidate {
-                name: entry.name,
-                platform,
-                local_path,
-                directory,
-                remote_file,
-            })
-        })
-        .collect()
-}
-
 async fn remote_async(
     host: &str,
     tool: &OsStr,
@@ -654,19 +523,6 @@ async fn remote_async(
     }
     let destination = Destination::resolve(host)?;
     remote_destination_async(destination, tool, arguments, password, None).await
-}
-
-pub(crate) fn ad_hoc_route(host: &str) -> io::Result<Option<(&str, &str)>> {
-    let Some((jump, target)) = host.split_once(',') else {
-        return Ok(None);
-    };
-    if jump.is_empty() || target.is_empty() || target.contains(',') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "ad-hoc routes use JUMP,TARGET with exactly two SSH aliases",
-        ));
-    }
-    Ok(Some((jump, target)))
 }
 
 async fn remote_destination_async(
@@ -1668,16 +1524,6 @@ async fn warm_host(
     })
 }
 
-fn human_bytes(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1}MiB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1}KiB", bytes as f64 / 1024.0)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
 async fn doctor_async(
     hosts: Vec<String>,
     password: Option<String>,
@@ -1843,19 +1689,8 @@ fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ad_hoc_route, default_tool_arguments};
+    use super::default_tool_arguments;
     use std::ffi::{OsStr, OsString};
-
-    #[test]
-    fn parses_exactly_one_ad_hoc_jump() {
-        assert_eq!(
-            ad_hoc_route("jump-a,server-a").unwrap(),
-            Some(("jump-a", "server-a"))
-        );
-        assert_eq!(ad_hoc_route("server-a").unwrap(), None);
-        assert!(ad_hoc_route("jump-a,server-a,server-b").is_err());
-        assert!(ad_hoc_route("jump-a,").is_err());
-    }
 
     #[test]
     fn gives_eza_human_friendly_defaults_without_overriding_choices() {

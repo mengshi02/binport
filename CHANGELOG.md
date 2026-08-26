@@ -14,6 +14,8 @@ All notable changes to binport are documented here. The format follows
 - Move the `host`, `auth`, local toolbox lifecycle, remote file transfer, and
   OCI Registry command implementations out of the binary entry point into
   focused modules without changing their CLI interfaces.
+- Extract shared route and toolbox artifact resolution from the command entry
+  point and move the zero-connection `plan` command into its own module.
 
 ## [0.1.5] - 2026-08-26
 
