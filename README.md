@@ -531,6 +531,90 @@ binport watch --jsonl @prod rg panic /var/log/app.log
 systems. Ctrl-C exits cleanly; a finite watch returns the status of its final
 snapshot.
 
+## Troubleshooting
+
+Start with the route-aware connection check and verbose execution:
+
+```sh
+binport host show server-a
+binport host test server-a
+binport --verbose server-a rg --version
+```
+
+### Key authentication failed
+
+Install or verify a dedicated key, or retry once with an interactive target
+password:
+
+```sh
+binport auth setup server-a
+binport auth status server-a
+binport --password server-a rg --version
+```
+
+For a ProxyJump route, the jump host must already be accessible with its own key
+or SSH agent. `--password` applies to the target host, not the jump host. Test
+the jump alias first with `binport host test jump`.
+
+### Unknown host key or host-key verification failed
+
+Binport uses the default OpenSSH `known_hosts` file and never silently disables
+verification. Verify the fingerprint through a trusted channel, connect once
+with OpenSSH to record it, and retry:
+
+```sh
+ssh server-a
+binport host test server-a
+```
+
+### ProxyJump failure or timeout
+
+Check each leg separately, then inspect the resolved route:
+
+```sh
+binport host test jump
+binport host show server-a
+binport host test server-a
+```
+
+Binport currently supports one jump. A comma-separated or nested ProxyJump
+chain is rejected rather than partially executed.
+
+### Interrupted copy or toolbox upload
+
+Uploads use restrictive temporary files and an atomic rename. An interrupted
+transfer never replaces the destination with partial content; rerun the same
+command. `binport cp` also removes its local staging file after failure. A
+subsequent tool execution either hits the verified content-addressed cache or
+uploads the complete binary again.
+
+### Checksum mismatch or stale lockfile
+
+Never repair `Binport.lock` by hand. Restore the declared source, resolve again,
+then rebuild:
+
+```sh
+binport resolve .
+binport clean
+binport fetch --all
+binport build .
+```
+
+A checksum mismatch remains an error after a clean download when the upstream
+artifact changed unexpectedly; stop and open an issue instead of bypassing the
+verification.
+
+### Binary fails on Alpine or another musl host
+
+Most curated Linux artifacts are static, but the current arm64 builds of `eza`
+and `delta` require glibc. Use a compatible catalog artifact or provide a musl
+binary with `COPY`; `binport doctor server-a` reports the selected platform and
+cache state.
+
+When reporting a problem, attach `binport --version`, the failing command with
+secrets removed, and `--verbose` or `--json` output. Do not include passwords,
+private keys, Registry tokens, or private host addresses.
+
 ## How remote execution works
 
 For every invocation, binport:

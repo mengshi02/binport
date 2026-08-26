@@ -6,25 +6,10 @@ set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 demo_home=$(mktemp -d "${TMPDIR:-/tmp}/binport-demo-home.XXXXXX")
 cache_home=${XDG_CACHE_HOME:-"$HOME/.cache"}
-trap 'rm -rf "$demo_home" /tmp/binport-demo.oci' EXIT INT TERM
+trap 'rm -rf "$demo_home"' EXIT INT TERM
 
 mkdir -p "$demo_home/.ssh"
-printf '%s\n' \
-  'Host bastion' \
-  '    HostName 203.0.113.10' \
-  '    User ops' \
-  '' \
-  'Host prod-api-01' \
-  '    HostName 192.0.2.15' \
-  '    User deploy' \
-  '    ProxyJump bastion' \
-  '' \
-  'Host prod-api-02' \
-  '    HostName 192.0.2.16' \
-  '    User deploy' \
-  '    ProxyJump bastion' >"$demo_home/.ssh/config"
 
-rm -rf /tmp/binport-demo.oci
 cd "$project_root"
 HOME="$demo_home" \
 XDG_CACHE_HOME="$cache_home" \

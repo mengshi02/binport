@@ -4,20 +4,25 @@ The README animation is an interactive terminal recording of real binport
 commands with documentation IP ranges and a temporary SSH configuration. It
 requires no credentials or remote infrastructure.
 
-Build the release binary and record the animation with
-[termtosvg](https://github.com/nbedos/termtosvg):
+Build the release binary and smoke-test the deterministic Host/ProxyJump
+transcript:
 
-Build with `cargo build --release --locked`, launch the recording shell with
-`sh docs/demo-shell.sh`, and type the commands interactively into a
-`termtosvg record` session. Render the resulting cast with:
+```sh
+cargo build --release --locked
+sh docs/demo.sh
+```
+
+To record the animation with [termtosvg](https://github.com/nbedos/termtosvg),
+launch `sh docs/demo-shell.sh` inside a `termtosvg record` session and type the
+commands from `demo.sh`. Render the resulting cast with:
 
 ```sh
 termtosvg render demo.cast docs/demo.svg \
-  --template window_frame --loop-delay 2000
+  --template window_frame --loop-delay 2000 --max-frame-duration 2000
 ```
 
-`demo.sh` remains available for a non-interactive smoke test. Do not add
-credentials or real infrastructure addresses to either recording script.
+Do not add credentials or real infrastructure addresses to either recording
+script.
 
 For the end-to-end remote execution recording, `demo-remote/shell.sh` starts a
 disposable localhost OpenSSH endpoint with ephemeral host and client keys. It

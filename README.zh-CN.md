@@ -298,6 +298,82 @@ binport watch --jsonl @prod rg panic /var/log/app.log
 事件包括 `INITIAL`、`CHANGED`、`CLEARED`、`OFFLINE` 和 `RECOVERED`。
 `--jsonl` 每行输出一个独立事件，适合智能体和流式处理系统。
 
+## 故障排查
+
+先执行能够识别路由的连接检查，再打开详细输出：
+
+```sh
+binport host show server-a
+binport host test server-a
+binport --verbose server-a rg --version
+```
+
+### Key authentication failed
+
+安装或检查 binport 专用 Key，也可以仅对目标机临时输入一次密码：
+
+```sh
+binport auth setup server-a
+binport auth status server-a
+binport --password server-a rg --version
+```
+
+ProxyJump 场景下，跳板机必须已经能够使用自己的 Key 或 SSH Agent 登录；
+`--password` 只属于目标机，不会用于跳板机。先运行
+`binport host test jump` 单独检查跳板机。
+
+### 未知主机密钥或主机密钥校验失败
+
+binport 使用 OpenSSH 默认的 `known_hosts`，不会静默关闭校验。通过可信渠道
+核对指纹，先用 OpenSSH 连接一次写入记录，然后重试：
+
+```sh
+ssh server-a
+binport host test server-a
+```
+
+### ProxyJump 失败或超时
+
+分别检查每一段连接，再确认最终解析出的路由：
+
+```sh
+binport host test jump
+binport host show server-a
+binport host test server-a
+```
+
+当前只支持一层跳板；逗号分隔的多级链或嵌套 ProxyJump 会明确报错，不会只执行
+一部分路由。
+
+### 复制或工具上传中断
+
+上传使用权限受限的临时文件和原子 rename。中断不会用残缺内容覆盖目标文件，
+直接重新执行原命令即可；`binport cp` 失败后也会删除本地中转文件。再次执行
+工具时，要么命中经过校验的内容寻址缓存，要么重新上传完整二进制。
+
+### SHA-256 不匹配或 Lockfile 失效
+
+不要手工修复 `Binport.lock`。恢复声明的源，重新解析并构建：
+
+```sh
+binport resolve .
+binport clean
+binport fetch --all
+binport build .
+```
+
+清理后重新下载仍然校验失败，说明上游产物可能发生了意外变化；不要绕过校验，
+应停止使用并提交 Issue。
+
+### Alpine 或其他 musl 主机执行失败
+
+大部分精选 Linux 产物是静态二进制，但当前 `eza`、`delta` 的 arm64 构建依赖
+glibc。可以通过 `COPY` 提供 musl 二进制；`binport doctor server-a` 会报告
+选择的平台和缓存状态。
+
+提交问题时，请附上 `binport --version`、去除敏感信息后的失败命令，以及
+`--verbose` 或 `--json` 输出。不要提交密码、私钥、Registry Token 或私网地址。
+
 ## 离线环境与 OCI Registry
 
 工具箱可以导出为一个自包含文件，在隔离网络中导入：

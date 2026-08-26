@@ -6,6 +6,12 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh the README recording around managed Host/ProxyJump routing and add
+  bilingual troubleshooting guidance for SSH, transfers, checksums, and Linux
+  compatibility.
+
 ## [0.1.5] - 2026-08-26
 
 ### Added
