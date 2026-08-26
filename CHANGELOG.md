@@ -17,6 +17,9 @@ All notable changes to binport are documented here. The format follows
 
 - Give remote `eza` human-friendly long-format and color defaults without
   overriding explicit user options.
+- Move the curated tool metadata from Rust source into a strictly validated,
+  compile-time embedded `catalog.yaml` while preserving offline single-binary
+  operation.
 
 ## [0.1.4] - 2026-08-25
 

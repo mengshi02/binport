@@ -118,6 +118,13 @@ consumes the lock and rejects a changed Binfile or changed local `COPY` input
 until `binport resolve` is run again. For compatibility, the first build creates
 a missing lock automatically.
 
+The curated metadata lives in [`catalog.yaml`](catalog.yaml), including command
+mappings, versions, platforms, artifact URLs, archive formats, and SHA-256
+checksums. It is strictly validated when loaded and embedded at compile time, so
+the installed `binport` remains a single binary and works without a network or
+sidecar catalog file. `Binport.lock` still freezes the resolved inputs used by
+each project.
+
 ## Commands
 
 ```text

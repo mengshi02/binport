@@ -678,10 +678,10 @@ fn list(args: ProjectArgs) -> io::Result<u8> {
             .join(", ");
         for tool in spec.tools {
             let version = tool.version.unwrap_or_else(|| {
-                catalog::TOOLS
+                catalog::tools()
                     .iter()
-                    .find(|(name, _)| *name == tool.name)
-                    .map(|(_, version)| (*version).to_owned())
+                    .find(|entry| entry.name == tool.name)
+                    .map(|entry| entry.version.clone())
                     .unwrap_or_else(|| "latest".into())
             });
             println!(
@@ -732,9 +732,9 @@ fn fetch(args: FetchArgs) -> io::Result<u8> {
         )
     })?;
     let tools: Vec<String> = if args.all {
-        catalog::TOOLS
+        catalog::tools()
             .iter()
-            .map(|(name, _)| (*name).to_owned())
+            .map(|entry| entry.name.clone())
             .collect()
     } else {
         args.tools

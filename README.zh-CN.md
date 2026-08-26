@@ -103,6 +103,11 @@ Manifest: .binport/toolbox.json
 版本、平台、下载地址、归档格式和 SHA-256；当 Binfile 或本地 `COPY`
 输入发生变化时，构建会要求重新 resolve。
 
+精选目录的数据维护在 [`catalog.yaml`](catalog.yaml)，包括命令对应关系、
+版本、平台、下载地址、归档格式和 SHA-256。加载时会严格校验，并在编译时嵌入
+binport，所以安装结果仍是单一二进制，无网络、无外置 catalog 文件也能工作；
+每个项目实际使用的解析结果仍由 `Binport.lock` 冻结。
+
 配置一个普通 SSH 别名：
 
 ```sshconfig
