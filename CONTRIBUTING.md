@@ -29,9 +29,16 @@ cargo test --all-targets --all-features --locked
 cargo build --release --locked
 ```
 
-Tests that require a real SSH host or private OCI Registry must remain opt-in.
-Never commit credentials, private hostnames, production IP addresses, SSH
-configuration, downloaded toolbox binaries, or local `.binport` state.
+On a Unix development host with OpenSSH Server installed, run the same
+credential-free native SSH integration test as CI:
+
+```sh
+BINPORT_BIN="$PWD/target/release/binport" sh tests/ssh-e2e.sh
+```
+
+Tests that require private infrastructure or a private OCI Registry must remain
+opt-in. Never commit credentials, private hostnames, production IP addresses,
+SSH configuration, downloaded toolbox binaries, or local `.binport` state.
 
 ## Making a change
 

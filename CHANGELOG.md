@@ -6,6 +6,11 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add a credential-free localhost SSH end-to-end test covering execution,
+  content-addressed cache hits, fleet commands, file copies, and removal in CI.
+
 ### Changed
 
 - Refresh the README recording around managed Host/ProxyJump routing and add
