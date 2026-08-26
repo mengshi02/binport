@@ -11,9 +11,9 @@ All notable changes to binport are documented here. The format follows
 - Refresh the README recording around managed Host/ProxyJump routing and add
   bilingual troubleshooting guidance for SSH, transfers, checksums, and Linux
   compatibility.
-- Move the `host`, `auth`, local toolbox lifecycle, and remote file transfer
-  command implementations out of the binary entry point into focused modules
-  without changing their CLI interfaces.
+- Move the `host`, `auth`, local toolbox lifecycle, remote file transfer, and
+  OCI Registry command implementations out of the binary entry point into
+  focused modules without changing their CLI interfaces.
 
 ## [0.1.5] - 2026-08-26
 
