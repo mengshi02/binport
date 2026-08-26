@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod fleet;
 pub mod host;
 pub mod lifecycle;
 pub mod plan;
