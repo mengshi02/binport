@@ -1,6 +1,6 @@
 use super::fleet::prepare_connections;
+use super::remote::run_remote;
 use super::runtime::{ToolCandidate, toolbox_candidates, write_prefixed};
-use crate::run_remote;
 use binport::catalog::Platform;
 use binport::ssh::{Destination, NativeSsh, SharedJump, select_hosts};
 use clap::Args;

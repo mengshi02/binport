@@ -25,6 +25,9 @@ All notable changes to binport are documented here. The format follows
   dedicated fleet module while preserving command output and cache behavior.
 - Move the `watch` state machine, reconnect handling, and event rendering into
   a dedicated command module backed by the shared fleet connection pool.
+- Move single-host, TTY, streaming, and fleet remote execution into a focused
+  command module, leaving the binary entry point responsible only for CLI
+  definition, routing, and process exit handling.
 
 ## [0.1.5] - 2026-08-26
 
