@@ -88,6 +88,62 @@ cargo install --path . --locked
 
 ## Host aliases without editing SSH config
 
+### Bastion compatibility presets
+
+List the built-in bastion login formats together with their evidence status:
+
+```console
+$ binport bastion presets
+PRESET              FORMAT                    PRODUCT      STATUS
+h3c-iware-slash     {user}/{host}/{account}   H3C i-Ware   deployment-verified
+huawei-cbh-at       {user}@{account}@{host}   Huawei CBH   vendor-documented
+jumpserver-koko-at  {user}@{account}@{host}   JumpServer   community-reported
+oneidentity-sps-inband {account}@{host}         One Identity vendor-documented
+wallix-bastion-shell   {account}@{host}:SSH:{user} WALLIX   vendor-documented
+cyberark-psmp-at       {user}@{account}@{host} CyberArk     community-reported
+```
+
+Use a preset instead of remembering a vendor-specific composite username:
+
+```console
+$ binport host add worker-a root@192.0.2.52 \
+    --bastion bastion.example.com \
+    --bastion-user operator \
+    --bastion-account root \
+    --bastion-preset h3c-iware-slash
+$ binport worker-a rg --version
+```
+
+`h3c-iware-slash` has been verified on an H3C i-Ware deployment; it is not a
+claim that every H3C version uses the same login format. Unlisted products can
+still use `--bastion-format` with `{user}`, `{host}`, and `{account}`.
+
+Probe a configured route without guessing credentials or trying multiple login
+formats:
+
+```console
+$ binport bastion probe worker-a
+Bastion capability report
+  Host:           worker-a
+  Preset:         h3c-iware-slash
+  Connection:     supported (93 ms)
+  Exec:           supported (18 ms)
+  direct-tcpip:   not-checked
+```
+
+Add `--check-forwarding` to make one explicit `direct-tcpip` capability request.
+It is opt-in because enterprise bastions may audit or deny forwarding requests.
+
+Forward a local TCP port through any configured direct, ProxyJump, or bastion
+route without invoking an external `ssh` process:
+
+```console
+$ binport tunnel 8080:127.0.0.1:3000 worker-a
+Tunneling 127.0.0.1:8080 -> 127.0.0.1:3000
+```
+
+This requires `direct-tcpip` to be enabled by the SSH server or bastion policy.
+
 Add direct hosts and one-hop routes with a small CLI instead of writing
 `ProxyJump` blocks by hand:
 
@@ -651,9 +707,9 @@ This is an early Linux-remote-focused release:
   and a binport-managed standard SSH config fragment.
 - Fleet groups: concrete SSH aliases selected by prefix, with bounded parallel
   execution (`--concurrency`, default 10) and a per-host result summary.
-- One-hop `ProxyJump` is supported. Comma-separated/nested jump chains,
-  encrypted private-key prompts, and remote cache cleanup are not implemented
-  yet.
+- One-hop `ProxyJump`, application-layer bastion templates, and native local
+  TCP tunnels are supported. Comma-separated/nested jump chains, encrypted
+  private-key prompts, and remote cache cleanup are not implemented yet.
 - Registry support covers anonymous and password-authenticated OCI pull,
   incremental push, and local OCI pack/unpack. Persistent login and custom CAs
   are not implemented yet.

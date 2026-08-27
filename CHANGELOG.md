@@ -8,6 +8,15 @@ All notable changes to binport are documented here. The format follows
 
 ### Added
 
+- Add deployment-verified bastion compatibility presets, including
+  `h3c-iware-slash`, via `binport bastion presets` and
+  `binport host add --bastion-preset`.
+- Add vendor-documented Huawei Cloud CBH and community-reported JumpServer/Koko
+  presets with explicit trust status and source metadata.
+- Add foreign PAM presets for One Identity SPS, WALLIX Bastion, and CyberArk
+  PSMP, retaining vendor-documented versus community-reported provenance.
+- Add `binport bastion probe` for bounded connection and exec checks, with an
+  opt-in `--check-forwarding` direct-tcpip capability test.
 - Add a credential-free localhost SSH end-to-end test covering execution,
   content-addressed cache hits, fleet commands, file copies, and removal in CI.
 

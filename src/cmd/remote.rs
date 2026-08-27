@@ -1,5 +1,7 @@
 use super::fleet::prepare_connections;
-use super::runtime::{ToolCandidate, ad_hoc_route, toolbox_candidates, write_prefixed};
+use super::runtime::{
+    ToolCandidate, ad_hoc_bastion, ad_hoc_route, toolbox_candidates, write_prefixed,
+};
 use binport::catalog::Platform;
 use binport::progress::TransferProgress;
 use binport::ssh::{Destination, NativeSsh, SharedJump, StreamChunk, select_hosts};
@@ -143,7 +145,12 @@ async fn remote_tty_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<u32> {
-    let ssh = if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
+    let ssh = if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
+        let bastion_dest = Destination::resolve(bastion_alias)?;
+        let mut target_dest = Destination::resolve(target_alias)?;
+        apply_ad_hoc_bastion(&mut target_dest, &bastion_dest)?;
+        NativeSsh::connect(&target_dest, password).await?
+    } else if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
         let jump = NativeSsh::connect_jump(jump_host, password).await?;
         let destination = Destination::resolve(target_host)?;
         NativeSsh::connect_with_jump(&destination, password, &jump).await?
@@ -159,7 +166,7 @@ async fn remote_tty_async(
         ));
     }
     let (probe_status, os, arch) = {
-        let (status, stdout, _) = ssh.execute_capture("uname -s; uname -m").await?;
+        let (status, stdout, _) = ssh.execute_capture_fresh("uname -s; uname -m").await?;
         let mut lines = stdout.lines();
         (
             status,
@@ -181,12 +188,12 @@ async fn remote_tty_async(
         .find(|candidate| candidate.platform == platform)
         .ok_or_else(|| io::Error::other("toolbox artifact is missing for the remote platform"))?;
     let (cached, _, _) = ssh
-        .execute_capture(&cache_check_command(&candidate.remote_file))
+        .execute_capture_fresh(&cache_check_command(&candidate.remote_file))
         .await?;
     if cached != 0 {
         upload_tool(&ssh, candidate, true).await?;
     }
-    ssh.execute_tty(
+    ssh.execute_tty_fresh(
         &execute_command(&candidate.remote_file, arguments)?,
         tool == OsStr::new("btm"),
     )
@@ -245,6 +252,12 @@ async fn remote_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<RemoteOutcome> {
+    if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
+        let bastion_dest = Destination::resolve(bastion_alias)?;
+        let mut target_dest = Destination::resolve(target_alias)?;
+        apply_ad_hoc_bastion(&mut target_dest, &bastion_dest)?;
+        return remote_destination_async(target_dest, tool, arguments, password, None).await;
+    }
     if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
         let jump = NativeSsh::connect_jump(jump_host, password).await?;
         let mut destination = Destination::resolve(target_host)?;
@@ -286,9 +299,7 @@ async fn remote_destination_async(
             "{}@{}:{}",
             destination.user, destination.hostname, destination.port
         ),
-        proxy_jump: ssh
-            .uses_proxy_jump()
-            .then(|| destination.proxy_jump.unwrap_or_else(|| "jump host".into())),
+        proxy_jump: ssh.route_label().or(destination.proxy_jump),
     })
 }
 
@@ -308,7 +319,7 @@ pub(crate) async fn run_remote(
         remote_for(Platform::LinuxArm64),
         arguments,
     )?;
-    let (status, stdout, stderr) = ssh.execute_capture(&command).await?;
+    let (status, stdout, stderr) = ssh.execute_capture_fresh(&command).await?;
     let (protocol, tool_stderr) = stderr.split_once('\n').unwrap_or((&stderr, ""));
     let fields = protocol.split_whitespace().collect::<Vec<_>>();
     if fields.first() != Some(&"__BINPORT__") || fields.len() < 3 {
@@ -340,7 +351,7 @@ pub(crate) async fn run_remote(
         .ok_or_else(|| io::Error::other("bootstrap selected a missing toolbox artifact"))?;
     upload_tool(ssh, candidate, true).await?;
     let (status, stdout, stderr) = ssh
-        .execute_capture(&execute_command(&candidate.remote_file, arguments)?)
+        .execute_capture_fresh(&execute_command(&candidate.remote_file, arguments)?)
         .await?;
     Ok((status, stdout, stderr, platform, false))
 }
@@ -358,7 +369,7 @@ async fn upload_tool(
         .map_or_else(|| "tool".to_owned(), |name| format!("upload {name}"));
     let progress = TransferProgress::new(label, Some(total), show_progress);
     let (status, stderr) = ssh
-        .upload_file(
+        .upload_file_fresh(
             &upload_command(&candidate.directory, &candidate.remote_file),
             &candidate.local_path,
             progress,
@@ -406,9 +417,7 @@ async fn remote_destination_stream_async(
             "{}@{}:{}",
             destination.user, destination.hostname, destination.port
         ),
-        proxy_jump: ssh
-            .uses_proxy_jump()
-            .then(|| destination.proxy_jump.unwrap_or_else(|| "jump host".into())),
+        proxy_jump: ssh.route_label().or(destination.proxy_jump),
     })
 }
 
@@ -430,7 +439,7 @@ async fn run_remote_stream(
         remote_for(Platform::LinuxArm64),
         arguments,
     )?;
-    let (status, protocol) = stream_probe(ssh, &command, host, &output).await?;
+    let (status, protocol) = stream_probe_fresh(ssh, &command, host, &output).await?;
     let fields = protocol.split_whitespace().collect::<Vec<_>>();
     if fields.first() != Some(&"__BINPORT__") || fields.len() < 3 {
         return Err(io::Error::other(format!(
@@ -460,7 +469,7 @@ async fn run_remote_stream(
         .find(|candidate| candidate.platform == platform)
         .ok_or_else(|| io::Error::other("bootstrap selected a missing toolbox artifact"))?;
     let (uploaded, _, upload_error) = ssh
-        .execute_capture_with_input(
+        .execute_capture_with_input_fresh(
             &upload_command(&candidate.directory, &candidate.remote_file),
             fs::read(&candidate.local_path)?,
         )
@@ -472,18 +481,18 @@ async fn run_remote_stream(
         )));
     }
     let command = execute_command(&candidate.remote_file, arguments)?;
-    let status = stream_plain(ssh, &command, host, &output).await?;
+    let status = stream_plain_fresh(ssh, &command, host, &output).await?;
     Ok((status, platform, false))
 }
 
-async fn stream_probe(
+async fn stream_probe_fresh(
     ssh: &NativeSsh,
     command: &str,
     host: &str,
     output: &mpsc::UnboundedSender<FleetOutput>,
 ) -> io::Result<(u32, String)> {
     let (raw_tx, mut raw_rx) = mpsc::unbounded_channel();
-    let execution = ssh.execute_stream(command, raw_tx);
+    let execution = ssh.execute_stream_fresh(command, raw_tx);
     tokio::pin!(execution);
     let mut protocol = Vec::new();
     let mut protocol_done = false;
@@ -533,14 +542,14 @@ fn consume_probe_chunk(
     }
 }
 
-async fn stream_plain(
+async fn stream_plain_fresh(
     ssh: &NativeSsh,
     command: &str,
     host: &str,
     output: &mpsc::UnboundedSender<FleetOutput>,
 ) -> io::Result<u32> {
     let (raw_tx, mut raw_rx) = mpsc::unbounded_channel();
-    let execution = ssh.execute_stream(command, raw_tx);
+    let execution = ssh.execute_stream_fresh(command, raw_tx);
     tokio::pin!(execution);
     loop {
         tokio::select! {
@@ -771,6 +780,24 @@ fn print_fleet_line(host: &str, width: usize, line: &[u8], stderr: bool) {
     } else {
         println!("{host:width$}  {line}");
     }
+}
+
+fn apply_ad_hoc_bastion(target: &mut Destination, bastion: &Destination) -> io::Result<()> {
+    if target.proxy_jump.is_some() || target.bastion_proxy.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target already has a proxy configured; ad-hoc bastion route is not applicable",
+        ));
+    }
+    target.bastion_proxy = Some(binport::ssh::BastionProxy {
+        host: bastion.hostname.clone(),
+        port: bastion.port,
+        user: bastion.user.clone(),
+        account: target.user.clone(),
+        preset: None,
+        format: "{user}/{host}/{account}".into(),
+    });
+    Ok(())
 }
 
 #[cfg(test)]

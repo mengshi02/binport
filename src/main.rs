@@ -2,12 +2,14 @@ mod cmd;
 
 use clap::{Parser, Subcommand};
 use cmd::auth::AuthArgs;
+use cmd::bastion::BastionArgs;
 use cmd::fleet::DoctorArgs;
 use cmd::host::HostArgs;
 use cmd::lifecycle::{BuildArgs, FetchArgs, ProjectArgs, TransferArgs};
 use cmd::plan::PlanArgs;
 use cmd::registry::{PullArgs, PushArgs};
 use cmd::transfer::{CpArgs, RmArgs};
+use cmd::tunnel::TunnelArgs;
 use cmd::watch::WatchArgs;
 use std::ffi::OsString;
 use std::io;
@@ -48,6 +50,8 @@ struct Cli {
 enum CommandKind {
     /// Set up and manage passwordless SSH authentication
     Auth(AuthArgs),
+    /// Inspect bastion compatibility presets
+    Bastion(BastionArgs),
     /// Add and manage reusable SSH hosts and jump routes
     Host(HostArgs),
     /// Resolve Binfile sources into Binport.lock
@@ -87,6 +91,8 @@ enum CommandKind {
     Plan(PlanArgs),
     /// Repeatedly run a toolbox command and report fleet changes
     Watch(WatchArgs),
+    /// Forward local ports to remote services through SSH
+    Tunnel(TunnelArgs),
     /// Execute a toolbox tool on an SSH host
     #[command(external_subcommand)]
     Remote(Vec<OsString>),
@@ -112,6 +118,7 @@ fn run(cli: Cli) -> io::Result<u8> {
     let tty = cli.tty;
     match cli.command {
         CommandKind::Auth(args) => cmd::auth::run(args, json),
+        CommandKind::Bastion(args) => cmd::bastion::run(args, use_password, json),
         CommandKind::Host(args) => cmd::host::run(args, use_password, json),
         CommandKind::Resolve(args) => cmd::lifecycle::resolve(args),
         CommandKind::Build(args) => cmd::lifecycle::build(args),
@@ -131,6 +138,7 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Warm(args) => cmd::fleet::warm(args, use_password, concurrency, json),
         CommandKind::Plan(args) => cmd::plan::run(args, json),
         CommandKind::Watch(args) => cmd::watch::run(args, use_password, concurrency, json),
+        CommandKind::Tunnel(args) => cmd::tunnel::run(args, use_password),
         CommandKind::Remote(args) => {
             cmd::remote::run(args, use_password, verbose, concurrency, json, tty)
         }

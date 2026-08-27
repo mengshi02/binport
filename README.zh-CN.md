@@ -86,6 +86,61 @@ cargo install --git https://github.com/mengshi02/binport --tag v0.1.5 --locked
 
 ## 不用手写 SSH Config
 
+### 堡垒机兼容模板
+
+查看 binport 内置的堡垒机登录格式及其证据状态：
+
+```console
+$ binport bastion presets
+PRESET              FORMAT                    PRODUCT      STATUS
+h3c-iware-slash     {user}/{host}/{account}   H3C i-Ware   deployment-verified
+huawei-cbh-at       {user}@{account}@{host}   Huawei CBH   vendor-documented
+jumpserver-koko-at  {user}@{account}@{host}   JumpServer   community-reported
+oneidentity-sps-inband {account}@{host}         One Identity vendor-documented
+wallix-bastion-shell   {account}@{host}:SSH:{user} WALLIX   vendor-documented
+cyberark-psmp-at       {user}@{account}@{host} CyberArk     community-reported
+```
+
+配置时使用模板名称，不再需要记忆厂商的组合用户名格式：
+
+```console
+$ binport host add worker-a root@192.0.2.52 \
+    --bastion bastion.example.com \
+    --bastion-user operator \
+    --bastion-account root \
+    --bastion-preset h3c-iware-slash
+$ binport worker-a rg --version
+```
+
+`h3c-iware-slash` 已在一个 H3C i-Ware 部署中验证，但不代表所有 H3C
+版本都采用相同格式。尚未内置的产品仍可通过 `--bastion-format` 自定义
+`{user}`、`{host}` 和 `{account}` 的排列方式。
+
+安全检测一条已配置路由的实际能力，不遍历用户名格式，也不猜测凭据：
+
+```console
+$ binport bastion probe worker-a
+Bastion capability report
+  Host:           worker-a
+  Preset:         h3c-iware-slash
+  Connection:     supported (93 ms)
+  Exec:           supported (18 ms)
+  direct-tcpip:   not-checked
+```
+
+增加 `--check-forwarding` 后才会主动发送一次 `direct-tcpip` 能力请求。该检测
+默认关闭，因为企业堡垒机可能记录或拒绝端口转发请求。
+
+通过已配置的直连、ProxyJump 或堡垒机路由转发本地 TCP 端口，全程不启动外部
+`ssh` 进程：
+
+```console
+$ binport tunnel 8080:127.0.0.1:3000 worker-a
+Tunneling 127.0.0.1:8080 -> 127.0.0.1:3000
+```
+
+该功能要求 SSH 服务或堡垒机策略允许 `direct-tcpip`。
+
 通过简洁命令添加直连主机和一跳路由，不必手写 `ProxyJump`：
 
 ```sh
@@ -419,7 +474,8 @@ binport pull oci://harbor.example.com/platform/ops:v1 \
 - 远程目标：Linux amd64、Linux arm64
 - 本地客户端：Linux、macOS 的 amd64/arm64，以及 Windows amd64
 - SSH 认证：Agent、未加密私钥、交互式密码、binport 管理的独立 Key
-- 支持一跳 ProxyJump 和交互式 PTY；暂不支持多级跳板链
+- 支持一跳 ProxyJump、应用层堡垒机模板、原生本地 TCP Tunnel 和交互式
+  PTY；暂不支持多级跳板链
 - OCI 支持匿名和密码认证的 pull/push；暂不支持持久登录和自定义 CA
 
 这是早期版本。如果你的场景需要新的工具、平台或 SSH 行为，欢迎提交 Issue。

@@ -14,6 +14,12 @@ pub struct HostEntry {
     pub user: String,
     pub port: u16,
     pub proxy_jump: Option<String>,
+    pub bastion_proxy: Option<String>,
+    pub bastion_user: Option<String>,
+    pub bastion_account: Option<String>,
+    pub bastion_port: Option<u16>,
+    pub bastion_preset: Option<String>,
+    pub bastion_format: Option<String>,
 }
 
 pub fn managed_config_path() -> io::Result<PathBuf> {
@@ -129,6 +135,12 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
                 user: String::new(),
                 port: 22,
                 proxy_jump: None,
+                bastion_proxy: None,
+                bastion_user: None,
+                bastion_account: None,
+                bastion_port: None,
+                bastion_preset: None,
+                bastion_format: None,
             });
         } else if let Some(entry) = current.as_mut() {
             if key.eq_ignore_ascii_case("hostname") {
@@ -141,6 +153,23 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
                 })?;
             } else if key.eq_ignore_ascii_case("proxyjump") {
                 entry.proxy_jump = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("bastionproxy") {
+                entry.bastion_proxy = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("bastionuser") {
+                entry.bastion_user = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("bastionaccount") {
+                entry.bastion_account = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("bastionport") {
+                entry.bastion_port = Some(value.parse().map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid BastionPort in binport_config",
+                    )
+                })?);
+            } else if key.eq_ignore_ascii_case("bastionpreset") {
+                entry.bastion_preset = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("bastionformat") {
+                entry.bastion_format = Some(value.to_owned());
             }
         }
     }
@@ -152,7 +181,10 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
 }
 
 fn render<'a>(entries: impl Iterator<Item = &'a HostEntry>) -> String {
-    let mut output = String::from("# Managed by binport. Use `binport host` to edit.\n\n");
+    let mut output = String::from(
+        "# Managed by binport. Use `binport host` to edit.\n\
+         IgnoreUnknown BastionProxy,BastionUser,BastionAccount,BastionPort,BastionPreset,BastionFormat\n\n",
+    );
     for entry in entries {
         output.push_str(&format!(
             "Host {}\n    HostName {}\n    User {}\n    Port {}\n",
@@ -160,6 +192,24 @@ fn render<'a>(entries: impl Iterator<Item = &'a HostEntry>) -> String {
         ));
         if let Some(jump) = &entry.proxy_jump {
             output.push_str(&format!("    ProxyJump {jump}\n"));
+        }
+        if let Some(bastion) = &entry.bastion_proxy {
+            output.push_str(&format!("    BastionProxy {bastion}\n"));
+        }
+        if let Some(user) = &entry.bastion_user {
+            output.push_str(&format!("    BastionUser {user}\n"));
+        }
+        if let Some(account) = &entry.bastion_account {
+            output.push_str(&format!("    BastionAccount {account}\n"));
+        }
+        if let Some(port) = entry.bastion_port {
+            output.push_str(&format!("    BastionPort {port}\n"));
+        }
+        if let Some(preset) = &entry.bastion_preset {
+            output.push_str(&format!("    BastionPreset {preset}\n"));
+        }
+        if let Some(format) = &entry.bastion_format {
+            output.push_str(&format!("    BastionFormat {format}\n"));
         }
         output.push('\n');
     }
@@ -178,6 +228,86 @@ fn validate_entry(entry: &HostEntry) -> io::Result<()> {
                 "a host cannot use itself as ProxyJump",
             ));
         }
+    }
+    if entry.proxy_jump.is_some() && entry.bastion_proxy.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ProxyJump and BastionProxy cannot be used together",
+        ));
+    }
+    let has_bastion_options = entry.bastion_user.is_some()
+        || entry.bastion_account.is_some()
+        || entry.bastion_port.is_some()
+        || entry.bastion_preset.is_some()
+        || entry.bastion_format.is_some();
+    if entry.bastion_proxy.is_none() && has_bastion_options {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "BastionUser, BastionAccount, BastionPort, BastionPreset, and BastionFormat require BastionProxy",
+        ));
+    }
+    if let Some(bastion) = &entry.bastion_proxy {
+        validate_token("bastion host", bastion)?;
+    }
+    if let Some(user) = &entry.bastion_user {
+        validate_token("bastion user", user)?;
+    }
+    if let Some(account) = &entry.bastion_account {
+        validate_token("bastion account", account)?;
+    }
+    if let Some(preset) = &entry.bastion_preset {
+        validate_token("bastion preset", preset)?;
+        let known = crate::bastion::find_preset(preset).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown bastion preset {preset:?}"),
+            )
+        })?;
+        if entry
+            .bastion_format
+            .as_deref()
+            .is_some_and(|format| format != known.format)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("BastionFormat does not match preset {preset:?}"),
+            ));
+        }
+    }
+    if let Some(format) = &entry.bastion_format {
+        validate_config_value("bastion format", format)?;
+    }
+    if entry.bastion_proxy.is_some() {
+        let format = entry
+            .bastion_format
+            .as_deref()
+            .unwrap_or("{user}/{host}/{account}");
+        if format.contains("{user}") && entry.bastion_user.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bastion format uses {user}; provide --bastion-user",
+            ));
+        }
+        if format.contains("{account}") && entry.bastion_account.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bastion format uses {account}; provide --bastion-account",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_config_value(label: &str, value: &str) -> io::Result<()> {
+    if value.is_empty()
+        || value
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == b'#')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {label} {value:?}"),
+        ));
     }
     Ok(())
 }
@@ -291,10 +421,81 @@ mod tests {
             user: "root".into(),
             port: 22,
             proxy_jump: None,
+            bastion_proxy: None,
+            bastion_user: None,
+            bastion_account: None,
+            bastion_port: None,
+            bastion_preset: None,
+            bastion_format: None,
         };
         assert!(validate_entry(&entry).is_err());
         entry.name = "app".into();
         entry.proxy_jump = Some("app".into());
+        assert!(validate_entry(&entry).is_err());
+    }
+
+    #[test]
+    fn round_trips_bastion_proxy_config() {
+        let source = "Host worker\n HostName 10.0.0.5\n User admin\n Port 22\n \
+                      BastionProxy 10.0.0.1\n BastionUser jumper\n \
+                      BastionAccount root\n BastionPort 2222\n \
+                      BastionPreset jumpserver-koko-at\n \
+                      BastionFormat {user}@{account}@{host}\n";
+        let entries = parse(source).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].bastion_proxy.as_deref(), Some("10.0.0.1"));
+        assert_eq!(entries[0].bastion_user.as_deref(), Some("jumper"));
+        assert_eq!(entries[0].bastion_account.as_deref(), Some("root"));
+        assert_eq!(entries[0].bastion_port, Some(2222));
+        assert_eq!(
+            entries[0].bastion_preset.as_deref(),
+            Some("jumpserver-koko-at")
+        );
+        assert_eq!(
+            entries[0].bastion_format.as_deref(),
+            Some("{user}@{account}@{host}")
+        );
+        let rendered = render(entries.iter());
+        assert!(rendered.contains("    BastionProxy 10.0.0.1"));
+        assert!(rendered.contains("    BastionUser jumper"));
+        assert!(rendered.contains("    BastionAccount root"));
+        assert!(rendered.contains("    BastionPort 2222"));
+        assert!(rendered.contains("    BastionPreset jumpserver-koko-at"));
+    }
+
+    #[test]
+    fn rejects_proxy_jump_and_bastion_together() {
+        let entry = HostEntry {
+            name: "worker".into(),
+            hostname: "10.0.0.5".into(),
+            user: "admin".into(),
+            port: 22,
+            proxy_jump: Some("jump".into()),
+            bastion_proxy: Some("10.0.0.1".into()),
+            bastion_user: None,
+            bastion_account: None,
+            bastion_port: None,
+            bastion_preset: None,
+            bastion_format: None,
+        };
+        assert!(validate_entry(&entry).is_err());
+    }
+
+    #[test]
+    fn rejects_bastion_format_config_injection() {
+        let entry = HostEntry {
+            name: "worker".into(),
+            hostname: "10.0.0.5".into(),
+            user: "admin".into(),
+            port: 22,
+            proxy_jump: None,
+            bastion_proxy: Some("10.0.0.1".into()),
+            bastion_user: Some("operator".into()),
+            bastion_account: Some("root".into()),
+            bastion_port: None,
+            bastion_preset: None,
+            bastion_format: Some("{user}/{host}/{account}\nProxyCommand=bad".into()),
+        };
         assert!(validate_entry(&entry).is_err());
     }
 

@@ -20,11 +20,35 @@ pub struct Destination {
     pub user: String,
     pub identity: Option<PathBuf>,
     pub proxy_jump: Option<String>,
+    pub bastion_proxy: Option<BastionProxy>,
 }
 
+#[derive(Clone, Debug)]
+pub struct BastionProxy {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub account: String,
+    pub preset: Option<String>,
+    pub format: String,
+}
+
+impl BastionProxy {
+    pub fn format_username(&self, target_host: &str) -> String {
+        self.format
+            .replace("{user}", &self.user)
+            .replace("{host}", target_host)
+            .replace("{account}", &self.account)
+    }
+}
+
+#[derive(Clone)]
 pub struct NativeSsh {
     client: Client,
     _jump: Option<Client>,
+    bastion: Option<String>,
+    destination: Option<Destination>,
+    password: Option<String>,
 }
 
 #[derive(Clone)]
@@ -47,6 +71,7 @@ impl Destination {
                 .unwrap_or_else(|| "root".into()),
             identity: None,
             proxy_jump: None,
+            bastion_proxy: None,
         };
         if let Some(home) = user_home() {
             let ssh_dir = home.join(".ssh");
@@ -155,10 +180,29 @@ impl NativeSsh {
         Ok(Self {
             client,
             _jump: Some(jump.client.clone()),
+            bastion: None,
+            destination: Some(destination.clone()),
+            password: password.map(str::to_owned),
         })
     }
 
     pub async fn connect(destination: &Destination, password: Option<&str>) -> io::Result<Self> {
+        if destination.proxy_jump.is_some() && destination.bastion_proxy.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ProxyJump and BastionProxy cannot be used together",
+            ));
+        }
+        if let Some(bastion) = &destination.bastion_proxy {
+            let client = connect_bastion(bastion, &destination.hostname, password).await?;
+            return Ok(Self {
+                client,
+                _jump: None,
+                bastion: Some(bastion.host.clone()),
+                destination: Some(destination.clone()),
+                password: password.map(str::to_owned),
+            });
+        }
         if let Some(proxy) = &destination.proxy_jump {
             // `password` belongs to the target. The jump host uses its own key or agent.
             let jump = Self::connect_jump(proxy, None).await?;
@@ -168,11 +212,39 @@ impl NativeSsh {
         Ok(Self {
             client: connect_direct(destination, password).await?,
             _jump: None,
+            bastion: None,
+            destination: Some(destination.clone()),
+            password: password.map(str::to_owned),
         })
     }
 
     pub fn uses_proxy_jump(&self) -> bool {
         self._jump.is_some()
+    }
+
+    pub fn route_label(&self) -> Option<String> {
+        if self._jump.is_some() {
+            return Some("proxy_jump".to_owned());
+        }
+        self.bastion.as_ref().map(|host| format!("bastion:{host}"))
+    }
+
+    pub fn is_bastion(&self) -> bool {
+        self.bastion.is_some()
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub async fn reconnect(&self) -> io::Result<Self> {
+        let destination = self.destination.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "connection cannot be recreated; no stored destination",
+            )
+        })?;
+        Self::connect(destination, self.password.as_deref()).await
     }
 
     pub async fn execute(&self, command: &str) -> io::Result<u32> {
@@ -419,6 +491,77 @@ impl NativeSsh {
         progress.finish();
         Ok((status, stderr))
     }
+
+    /// Execute a command on a fresh connection if this is a bastion proxy.
+    /// Bastion hosts only support one exec channel per connection.
+    pub async fn execute_capture_fresh(&self, command: &str) -> io::Result<(u32, String, String)> {
+        if self.is_bastion() {
+            self.reconnect().await?.execute_capture(command).await
+        } else {
+            self.execute_capture(command).await
+        }
+    }
+
+    /// Execute a streaming command on a fresh connection if this is a bastion proxy.
+    pub async fn execute_stream_fresh(
+        &self,
+        command: &str,
+        output: mpsc::UnboundedSender<StreamChunk>,
+    ) -> io::Result<u32> {
+        if self.is_bastion() {
+            self.reconnect()
+                .await?
+                .execute_stream(command, output)
+                .await
+        } else {
+            self.execute_stream(command, output).await
+        }
+    }
+
+    /// Execute a command with stdin input on a fresh connection if bastion.
+    pub async fn execute_capture_with_input_fresh(
+        &self,
+        command: &str,
+        input: Vec<u8>,
+    ) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
+        if self.is_bastion() {
+            self.reconnect()
+                .await?
+                .execute_capture_with_input(command, input)
+                .await
+        } else {
+            self.execute_capture_with_input(command, input).await
+        }
+    }
+
+    /// Upload a file on a fresh connection if this is a bastion proxy.
+    pub async fn upload_file_fresh(
+        &self,
+        command: &str,
+        path: &Path,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>)> {
+        if self.is_bastion() {
+            self.reconnect()
+                .await?
+                .upload_file(command, path, progress)
+                .await
+        } else {
+            self.upload_file(command, path, progress).await
+        }
+    }
+
+    /// Execute a TTY command on a fresh connection if this is a bastion proxy.
+    pub async fn execute_tty_fresh(&self, command: &str, eof_on_quit: bool) -> io::Result<u32> {
+        if self.is_bastion() {
+            self.reconnect()
+                .await?
+                .execute_tty(command, eof_on_quit)
+                .await
+        } else {
+            self.execute_tty(command, eof_on_quit).await
+        }
+    }
 }
 
 struct RawModeGuard;
@@ -438,6 +581,59 @@ async fn connect_direct(destination: &Destination, password: Option<&str>) -> io
     )
     .await
     .map_err(io::Error::other)
+}
+
+fn bastion_password_for_host(host: &str) -> Option<String> {
+    // Try per-host env var first: BINPORT_BASTION_PASSWORD_10_121_61_3
+    let suffix = bastion_env_suffix(host);
+    let host_key = format!("BINPORT_BASTION_PASSWORD_{suffix}");
+    if let Ok(password) = env::var(&host_key) {
+        return Some(password);
+    }
+    // Fall back to generic env var: BINPORT_BASTION_PASSWORD
+    env::var("BINPORT_BASTION_PASSWORD").ok()
+}
+
+async fn connect_bastion(
+    bastion: &BastionProxy,
+    target_host: &str,
+    password: Option<&str>,
+) -> io::Result<Client> {
+    let composite_user = bastion.format_username(target_host);
+    let auth = if let Some(password) = password {
+        AuthMethod::with_password(password)
+    } else if let Some(password) = bastion_password_for_host(&bastion.host) {
+        AuthMethod::with_password(&password)
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "bastion proxy requires a password for {}; use --password, set BINPORT_BASTION_PASSWORD_{}, or set BINPORT_BASTION_PASSWORD",
+                bastion.host,
+                bastion_env_suffix(&bastion.host)
+            ),
+        ));
+    };
+    Client::connect(
+        (bastion.host.as_str(), bastion.port),
+        &composite_user,
+        auth,
+        ServerCheckMethod::DefaultKnownHostsFile,
+    )
+    .await
+    .map_err(io::Error::other)
+}
+
+fn bastion_env_suffix(host: &str) -> String {
+    host.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn auth_method(destination: &Destination, password: Option<&str>) -> io::Result<AuthMethod> {
@@ -471,6 +667,18 @@ fn apply_ssh_config(source: &str, alias: &str, allow_user: bool, destination: &m
     let mut port_set = false;
     let mut identity_set = false;
     let mut proxy_jump_set = false;
+    let mut bastion_host_set = false;
+    let mut bastion_user_set = false;
+    let mut bastion_account_set = false;
+    let mut bastion_port_set = false;
+    let mut bastion_format_set = false;
+    let mut bastion_preset_set = false;
+    let mut bastion_host = String::new();
+    let mut bastion_port: u16 = 22;
+    let mut bastion_user = String::new();
+    let mut bastion_account = String::new();
+    let mut bastion_format = String::new();
+    let mut bastion_preset = String::new();
     for raw in source.lines() {
         let line = raw.split('#').next().unwrap_or_default().trim();
         let Some((key, value)) = line.split_once(char::is_whitespace) else {
@@ -501,8 +709,42 @@ fn apply_ssh_config(source: &str, alias: &str, allow_user: bool, destination: &m
                     destination.proxy_jump = Some(value.into());
                 }
                 proxy_jump_set = true;
+            } else if key.eq_ignore_ascii_case("bastionproxy") && !bastion_host_set {
+                bastion_host = value.into();
+                bastion_host_set = true;
+            } else if key.eq_ignore_ascii_case("bastionuser") && !bastion_user_set {
+                bastion_user = value.into();
+                bastion_user_set = true;
+            } else if key.eq_ignore_ascii_case("bastionaccount") && !bastion_account_set {
+                bastion_account = value.into();
+                bastion_account_set = true;
+            } else if key.eq_ignore_ascii_case("bastionport") && !bastion_port_set {
+                if let Ok(port) = value.parse() {
+                    bastion_port = port;
+                    bastion_port_set = true;
+                }
+            } else if key.eq_ignore_ascii_case("bastionformat") && !bastion_format_set {
+                bastion_format = value.into();
+                bastion_format_set = true;
+            } else if key.eq_ignore_ascii_case("bastionpreset") && !bastion_preset_set {
+                bastion_preset = value.into();
+                bastion_preset_set = true;
             }
         }
+    }
+    if bastion_host_set && !bastion_host.is_empty() {
+        destination.bastion_proxy = Some(BastionProxy {
+            host: bastion_host,
+            port: bastion_port,
+            user: bastion_user,
+            account: bastion_account,
+            preset: bastion_preset_set.then_some(bastion_preset),
+            format: if bastion_format.is_empty() {
+                "{user}/{host}/{account}".into()
+            } else {
+                bastion_format
+            },
+        });
     }
 }
 
@@ -530,6 +772,7 @@ mod tests {
             user: "me".into(),
             identity: None,
             proxy_jump: None,
+            bastion_proxy: None,
         }
     }
 
@@ -557,6 +800,61 @@ mod tests {
             &mut dest,
         );
         assert_eq!(dest.proxy_jump.as_deref(), Some("bastion"));
+    }
+
+    #[test]
+    fn resolves_bastion_proxy_from_ssh_config() {
+        let mut dest = destination();
+        apply_ssh_config(
+            "Host worker\n HostName 10.0.0.5\n User admin\n \
+             BastionProxy 10.0.0.1\n BastionUser jumper\n BastionAccount root\n",
+            "worker",
+            true,
+            &mut dest,
+        );
+        let bastion = dest.bastion_proxy.as_ref().unwrap();
+        assert_eq!(bastion.host, "10.0.0.1");
+        assert_eq!(bastion.port, 22);
+        assert_eq!(bastion.user, "jumper");
+        assert_eq!(bastion.account, "root");
+        assert_eq!(bastion.format, "{user}/{host}/{account}");
+    }
+
+    #[test]
+    fn resolves_bastion_proxy_with_custom_format_and_port() {
+        let mut dest = destination();
+        apply_ssh_config(
+            "Host worker\n HostName 10.0.0.5\n \
+             BastionProxy 10.0.0.1\n BastionPort 2222\n \
+             BastionUser jumper\n BastionAccount admin\n \
+             BastionFormat {user}@@{host}@@{account}\n",
+            "worker",
+            true,
+            &mut dest,
+        );
+        let bastion = dest.bastion_proxy.as_ref().unwrap();
+        assert_eq!(bastion.port, 2222);
+        assert_eq!(bastion.format, "{user}@@{host}@@{account}");
+        assert_eq!(
+            bastion.format_username("10.0.0.5"),
+            "jumper@@10.0.0.5@@admin"
+        );
+    }
+
+    #[test]
+    fn bastion_format_username_substitutes_all_placeholders() {
+        let bastion = BastionProxy {
+            host: "10.0.0.1".into(),
+            port: 22,
+            user: "alice".into(),
+            account: "deploy".into(),
+            preset: None,
+            format: "{user}/{host}/{account}".into(),
+        };
+        assert_eq!(
+            bastion.format_username("192.168.1.5"),
+            "alice/192.168.1.5/deploy"
+        );
     }
 
     #[test]

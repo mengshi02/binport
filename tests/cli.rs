@@ -30,11 +30,117 @@ fn exposes_fleet_lifecycle_commands() {
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
     for command in [
-        "auth", "host", "resolve", "cp", "rm", "pack", "unpack", "pull", "push", "doctor", "warm",
-        "plan", "watch",
+        "auth", "bastion", "host", "resolve", "cp", "rm", "pack", "unpack", "pull", "push",
+        "doctor", "warm", "plan", "watch",
     ] {
         assert!(help.contains(command), "help is missing {command}");
     }
+}
+
+#[test]
+fn lists_bastion_presets() {
+    let output = Command::new(env!("CARGO_BIN_EXE_binport"))
+        .args(["bastion", "presets"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("h3c-iware-slash"));
+    assert!(stdout.contains("{user}/{host}/{account}"));
+    assert!(stdout.contains("deployment-verified"));
+    assert!(stdout.contains("huawei-cbh-at"));
+    assert!(stdout.contains("vendor-documented"));
+    assert!(stdout.contains("jumpserver-koko-at"));
+    assert!(stdout.contains("community-reported"));
+    assert!(stdout.contains("oneidentity-sps-inband"));
+    assert!(stdout.contains("wallix-bastion-shell"));
+    assert!(stdout.contains("cyberark-psmp-at"));
+}
+
+#[test]
+fn host_add_resolves_bastion_preset() {
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_binport"))
+        .env("HOME", home.path())
+        .args([
+            "host",
+            "add",
+            "worker",
+            "root@10.0.0.52",
+            "--bastion",
+            "192.0.2.10",
+            "--bastion-user",
+            "operator",
+            "--bastion-account",
+            "root",
+            "--bastion-preset",
+            "h3c-iware-slash",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = fs::read_to_string(home.path().join(".ssh/binport_config")).unwrap();
+    assert!(config.contains("BastionPreset h3c-iware-slash"));
+    assert!(config.contains("BastionFormat {user}/{host}/{account}"));
+}
+
+#[test]
+fn host_add_rejects_missing_preset_fields_and_config_injection() {
+    let home = tempfile::tempdir().unwrap();
+    let binport = env!("CARGO_BIN_EXE_binport");
+    let missing = Command::new(binport)
+        .env("HOME", home.path())
+        .args([
+            "host",
+            "add",
+            "worker",
+            "root@10.0.0.52",
+            "--bastion",
+            "192.0.2.10",
+            "--bastion-preset",
+            "h3c-iware-slash",
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("--bastion-user"));
+
+    let injection = Command::new(binport)
+        .env("HOME", home.path())
+        .args([
+            "host",
+            "add",
+            "worker",
+            "root@10.0.0.52",
+            "--bastion",
+            "192.0.2.10",
+            "--bastion-user",
+            "operator",
+            "--bastion-account",
+            "root",
+            "--bastion-format",
+            "{user}/{host}/{account}\nProxyCommand=bad",
+        ])
+        .output()
+        .unwrap();
+    assert!(!injection.status.success());
+    assert!(String::from_utf8_lossy(&injection.stderr).contains("invalid bastion format"));
+}
+
+#[test]
+fn bastion_probe_requires_a_bastion_route() {
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_binport"))
+        .env("HOME", home.path())
+        .args(["bastion", "probe", "root@192.0.2.1"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not configured with BastionProxy"));
 }
 
 #[test]
@@ -89,4 +195,18 @@ fn keeps_auth_and_host_subcommand_interfaces_visible() {
             );
         }
     }
+}
+
+#[test]
+fn tunnel_rejects_port_zero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_binport"))
+        .args(["tunnel", "0:localhost:8080", "nonexistent-host"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("greater than 0"),
+        "expected port validation error, got: {stderr}"
+    );
 }

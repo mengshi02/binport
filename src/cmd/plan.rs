@@ -73,12 +73,16 @@ pub fn run(args: PlanArgs, json: bool) -> io::Result<u8> {
     } else {
         println!("HOST\tDESTINATION\tROUTE");
         for (host, destination) in destinations {
+            let route = if let Some(jump) = &destination.proxy_jump {
+                format!("jump:{jump}")
+            } else if let Some(bastion) = &destination.bastion_proxy {
+                format!("bastion:{}", bastion.host)
+            } else {
+                "direct".to_owned()
+            };
             println!(
-                "{host}\t{}@{}:{}\t{}",
-                destination.user,
-                destination.hostname,
-                destination.port,
-                destination.proxy_jump.as_deref().unwrap_or("direct")
+                "{host}\t{}@{}:{}\t{route}",
+                destination.user, destination.hostname, destination.port,
             );
         }
         println!("\nARTIFACT\tSIZE\tREMOTE CACHE PATH");

@@ -1,4 +1,4 @@
-use super::runtime::ad_hoc_route;
+use super::runtime::{ad_hoc_bastion, ad_hoc_route};
 use binport::progress::TransferProgress;
 use binport::remote_command;
 use binport::ssh::{Destination, NativeSsh};
@@ -184,13 +184,36 @@ fn source_name(value: &str) -> io::Result<String> {
 }
 
 async fn connect_host(host: &str, password: Option<&str>) -> io::Result<NativeSsh> {
+    if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
+        let bastion_dest = Destination::resolve(bastion_alias)?;
+        let mut target_dest = Destination::resolve(target_alias)?;
+        apply_ad_hoc_bastion(&mut target_dest, &bastion_dest)?;
+        return NativeSsh::connect(&target_dest, password).await;
+    }
     if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
         let jump = NativeSsh::connect_jump(jump_host, password).await?;
         let destination = Destination::resolve(target_host)?;
-        NativeSsh::connect_with_jump(&destination, password, &jump).await
-    } else {
-        NativeSsh::connect(&Destination::resolve(host)?, password).await
+        return NativeSsh::connect_with_jump(&destination, password, &jump).await;
     }
+    NativeSsh::connect(&Destination::resolve(host)?, password).await
+}
+
+fn apply_ad_hoc_bastion(target: &mut Destination, bastion: &Destination) -> io::Result<()> {
+    if target.proxy_jump.is_some() || target.bastion_proxy.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target already has a proxy configured; ad-hoc bastion route is not applicable",
+        ));
+    }
+    target.bastion_proxy = Some(binport::ssh::BastionProxy {
+        host: bastion.hostname.clone(),
+        port: bastion.port,
+        user: bastion.user.clone(),
+        account: target.user.clone(),
+        preset: None,
+        format: "{user}/{host}/{account}".into(),
+    });
+    Ok(())
 }
 
 async fn download_remote_file(
@@ -208,6 +231,13 @@ async fn download_remote_file(
         )));
     }
     let total = size_stdout.trim().parse::<u64>().ok();
+    // Bastion hosts only support one exec channel per connection, so open a
+    // fresh connection for the actual file transfer.
+    let transfer_ssh = if ssh.is_bastion() {
+        ssh.reconnect().await?
+    } else {
+        ssh
+    };
     let command = remote_command::download_file(source.path)?;
     let temp = copy_temp_path();
     let progress = TransferProgress::new(
@@ -215,7 +245,7 @@ async fn download_remote_file(
         total,
         show_progress,
     );
-    let (status, stderr) = match ssh.download_file(&command, &temp, progress).await {
+    let (status, stderr) = match transfer_ssh.download_file(&command, &temp, progress).await {
         Ok(result) => result,
         Err(error) => {
             let _ = fs::remove_file(&temp);

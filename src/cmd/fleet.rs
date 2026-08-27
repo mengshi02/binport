@@ -231,7 +231,7 @@ async fn warm_host(
     } else {
         NativeSsh::connect(&destination, password).await?
     };
-    let (status, stdout, stderr) = ssh.execute_capture("uname -s; uname -m").await?;
+    let (status, stdout, stderr) = ssh.execute_capture_fresh("uname -s; uname -m").await?;
     if status != 0 {
         return Err(io::Error::other(format!(
             "platform detection failed: {stderr}"
@@ -260,7 +260,7 @@ async fn warm_host(
     let flags = if checks.is_empty() {
         String::new()
     } else {
-        let (status, stdout, stderr) = ssh.execute_capture(&checks).await?;
+        let (status, stdout, stderr) = ssh.execute_capture_fresh(&checks).await?;
         if status != 0 {
             return Err(io::Error::other(format!(
                 "remote cache check failed: {stderr}"
@@ -282,7 +282,7 @@ async fn warm_host(
         let data = fs::read(&candidate.local_path)?;
         bytes += data.len() as u64;
         let (status, _, stderr) = ssh
-            .execute_capture_with_input(
+            .execute_capture_with_input_fresh(
                 &upload_command(&candidate.directory, &candidate.remote_file),
                 data,
             )
@@ -298,7 +298,7 @@ async fn warm_host(
     }
     Ok(WarmOutcome {
         platform,
-        route: destination.proxy_jump.unwrap_or_else(|| "direct".into()),
+        route: destination_route(&destination),
         cached,
         uploaded,
         bytes,
@@ -414,7 +414,7 @@ async fn doctor_host(
     } else {
         NativeSsh::connect(&destination, password).await?
     };
-    let (status, stdout, stderr) = ssh.execute_capture("uname -s; uname -m").await?;
+    let (status, stdout, stderr) = ssh.execute_capture_fresh("uname -s; uname -m").await?;
     if status != 0 {
         return Err(io::Error::other(format!(
             "platform detection failed: {stderr}"
@@ -447,14 +447,24 @@ async fn doctor_host(
     let cached = if checks.is_empty() {
         0
     } else {
-        let (_, output, _) = ssh.execute_capture(&checks).await?;
+        let (_, output, _) = ssh.execute_capture_fresh(&checks).await?;
         output.bytes().filter(|byte| *byte == b'1').count()
     };
     Ok(DoctorOutcome {
         platform,
-        route: destination.proxy_jump.unwrap_or_else(|| "direct".into()),
+        route: destination_route(&destination),
         cached,
         tools: files.len(),
         elapsed_ms: started.elapsed().as_millis(),
     })
+}
+
+fn destination_route(destination: &Destination) -> String {
+    if let Some(jump) = &destination.proxy_jump {
+        return format!("jump:{jump}");
+    }
+    if let Some(bastion) = &destination.bastion_proxy {
+        return format!("bastion:{}", bastion.host);
+    }
+    "direct".to_owned()
 }

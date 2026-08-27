@@ -64,6 +64,19 @@ pub fn ad_hoc_route(host: &str) -> io::Result<Option<(&str, &str)>> {
     Ok(Some((jump, target)))
 }
 
+pub fn ad_hoc_bastion(host: &str) -> io::Result<Option<(&str, &str)>> {
+    let Some((bastion, target)) = host.split_once('~') else {
+        return Ok(None);
+    };
+    if bastion.is_empty() || target.is_empty() || target.contains('~') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ad-hoc bastion routes use BASTION~TARGET with exactly two SSH aliases",
+        ));
+    }
+    Ok(Some((bastion, target)))
+}
+
 pub fn human_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1}MiB", bytes as f64 / (1024.0 * 1024.0))
@@ -86,7 +99,7 @@ pub fn write_prefixed(host: &str, width: usize, text: &str, stderr: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::ad_hoc_route;
+    use super::{ad_hoc_bastion, ad_hoc_route};
 
     #[test]
     fn parses_exactly_one_ad_hoc_jump() {
@@ -97,5 +110,17 @@ mod tests {
         assert_eq!(ad_hoc_route("server-a").unwrap(), None);
         assert!(ad_hoc_route("jump-a,server-a,server-b").is_err());
         assert!(ad_hoc_route("jump-a,").is_err());
+    }
+
+    #[test]
+    fn parses_exactly_one_ad_hoc_bastion() {
+        assert_eq!(
+            ad_hoc_bastion("bastion-a~worker-1").unwrap(),
+            Some(("bastion-a", "worker-1"))
+        );
+        assert_eq!(ad_hoc_bastion("worker-1").unwrap(), None);
+        assert!(ad_hoc_bastion("bastion-a~worker-1~worker-2").is_err());
+        assert!(ad_hoc_bastion("bastion-a~").is_err());
+        assert!(ad_hoc_bastion("~worker-1").is_err());
     }
 }

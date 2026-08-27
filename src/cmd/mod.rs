@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bastion;
 pub mod fleet;
 pub mod host;
 pub mod lifecycle;
@@ -7,4 +8,5 @@ pub mod registry;
 pub mod remote;
 pub mod runtime;
 pub mod transfer;
+pub mod tunnel;
 pub mod watch;

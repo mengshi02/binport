@@ -265,7 +265,9 @@ async fn watch_target_once(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<(Platform, bool, WatchSnapshot)> {
-    if target.ssh.is_none() {
+    // Reconnect for bastion hosts on every iteration since they only support
+    // one exec channel per connection, and run_remote will use multiple channels.
+    if target.ssh.is_none() || target.ssh.as_ref().is_some_and(|s| s.is_bastion()) {
         target.ssh = Some(if let Some(jump) = &target.jump {
             NativeSsh::connect_with_jump(&target.destination, password, jump).await?
         } else {

@@ -38,8 +38,26 @@ struct HostAddArgs {
     #[arg(long, default_value_t = 22)]
     port: u16,
     /// Existing SSH alias used as ProxyJump
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["bastion", "bastion_user", "bastion_account", "bastion_port", "bastion_format", "bastion_preset"])]
     jump: Option<String>,
+    /// Bastion host IP or hostname (cannot be combined with --jump)
+    #[arg(long, conflicts_with = "jump")]
+    bastion: Option<String>,
+    /// Bastion login username
+    #[arg(long, requires = "bastion")]
+    bastion_user: Option<String>,
+    /// Target account on the destination via bastion
+    #[arg(long, requires = "bastion")]
+    bastion_account: Option<String>,
+    /// Bastion SSH port
+    #[arg(long, requires = "bastion")]
+    bastion_port: Option<u16>,
+    /// Built-in bastion login preset (see `binport bastion presets`)
+    #[arg(long, requires = "bastion", conflicts_with = "bastion_format")]
+    bastion_preset: Option<String>,
+    /// Composite username template (placeholders: {user}, {host}, {account})
+    #[arg(long, requires = "bastion", conflicts_with = "bastion_preset")]
+    bastion_format: Option<String>,
     /// Update an existing binport-managed alias
     #[arg(long)]
     force: bool,
@@ -68,6 +86,15 @@ fn add(args: HostAddArgs, json: bool) -> io::Result<u8> {
             "SSH port must be greater than zero",
         ));
     }
+    if args.bastion_port.unwrap_or(0) == 0 && args.bastion.is_some() {
+        // default is fine, but explicit 0 is not
+        if args.bastion_port == Some(0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bastion port must be greater than zero",
+            ));
+        }
+    }
     let (destination_user, hostname) = args
         .destination
         .split_once('@')
@@ -82,12 +109,23 @@ fn add(args: HostAddArgs, json: bool) -> io::Result<u8> {
         .or_else(|| env::var("USER").ok())
         .or_else(|| env::var("USERNAME").ok())
         .unwrap_or_else(|| "root".into());
+    let bastion_preset = args.bastion_preset.clone();
+    let bastion_format = binport::bastion::resolve_format(
+        args.bastion_preset.as_deref(),
+        args.bastion_format.as_deref(),
+    )?;
     let entry = binport::host::HostEntry {
         name: args.name,
         hostname: hostname.to_owned(),
         user,
         port: args.port,
         proxy_jump: args.jump,
+        bastion_proxy: args.bastion,
+        bastion_user: args.bastion_user,
+        bastion_account: args.bastion_account,
+        bastion_port: args.bastion_port,
+        bastion_preset,
+        bastion_format,
     };
     binport::host::add(entry.clone(), args.force)?;
     if json {
@@ -124,13 +162,10 @@ fn list(json: bool) -> io::Result<u8> {
     } else {
         println!("HOST\tDESTINATION\tROUTE");
         for entry in entries {
+            let route = route_label(&entry);
             println!(
-                "{}\t{}@{}:{}\t{}",
-                entry.name,
-                entry.user,
-                entry.hostname,
-                entry.port,
-                entry.proxy_jump.as_deref().unwrap_or("direct")
+                "{}\t{}@{}:{}\t{route}",
+                entry.name, entry.user, entry.hostname, entry.port,
             );
         }
     }
@@ -155,7 +190,7 @@ fn show(name: &str, json: bool) -> io::Result<u8> {
             "Destination: {}@{}:{}",
             entry.user, entry.hostname, entry.port
         );
-        println!("Route: {}", entry.proxy_jump.as_deref().unwrap_or("direct"));
+        println!("Route: {}", route_label(&entry));
         println!(
             "Config: {}",
             binport::host::managed_config_path()?.display()
@@ -215,6 +250,7 @@ fn test(name: &str, use_password: bool, json: bool) -> io::Result<u8> {
                 "host": name,
                 "destination": format!("{}@{}:{}", destination.user, destination.hostname, destination.port),
                 "proxy_jump": destination.proxy_jump,
+                "bastion_proxy": destination.bastion_proxy.as_ref().map(|b| &b.host),
                 "platform": platform,
                 "latency_ms": latency_ms,
                 "ok": true,
@@ -222,14 +258,15 @@ fn test(name: &str, use_password: bool, json: bool) -> io::Result<u8> {
             .map_err(io::Error::other)?
         );
     } else {
+        let route = if let Some(jump) = &destination.proxy_jump {
+            format!("{jump} → {name}")
+        } else if let Some(bastion) = &destination.bastion_proxy {
+            format!("bastion:{} → {name}", bastion.host)
+        } else {
+            "direct".to_owned()
+        };
         println!("✓ Host       {name}");
-        println!(
-            "✓ Route      {}",
-            destination
-                .proxy_jump
-                .as_deref()
-                .map_or_else(|| "direct".to_owned(), |jump| format!("{jump} → {name}"))
-        );
+        println!("✓ Route      {route}");
         println!("✓ Platform   {platform}");
         println!("✓ Latency    {latency_ms} ms");
     }
@@ -243,5 +280,21 @@ fn host_json(entry: &binport::host::HostEntry) -> serde_json::Value {
         "user": entry.user,
         "port": entry.port,
         "proxy_jump": entry.proxy_jump,
+        "bastion_proxy": entry.bastion_proxy,
+        "bastion_user": entry.bastion_user,
+        "bastion_account": entry.bastion_account,
+        "bastion_port": entry.bastion_port,
+        "bastion_preset": entry.bastion_preset,
+        "bastion_format": entry.bastion_format,
     })
+}
+
+fn route_label(entry: &binport::host::HostEntry) -> String {
+    if let Some(jump) = &entry.proxy_jump {
+        return format!("jump:{jump}");
+    }
+    if let Some(bastion) = &entry.bastion_proxy {
+        return format!("bastion:{bastion}");
+    }
+    "direct".to_owned()
 }

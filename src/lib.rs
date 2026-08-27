@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bastion;
 pub mod binfile;
 pub mod catalog;
 pub mod host;
