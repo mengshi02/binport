@@ -26,16 +26,16 @@
 
 **Build a toolbox once. Run it on any SSH host. Install nothing there.**
 
-> **New in v0.1.5 — stop hand-writing ProxyJump config.** Add a direct host and
-> a machine behind it in two commands; binport creates standard, reusable SSH
-> aliases for itself, OpenSSH, rsync, and editor integrations.
+> **Your tools. Any server. Even behind a bastion.** Binport carries portable
+> CLI tools through direct SSH, ProxyJump, and application-layer enterprise
+> bastions using native Rust SSH—without installing an agent on the server.
 
 ```console
-$ binport host add jump root@203.0.113.10
-$ binport host add app-01 root@10.0.0.52 --jump jump
-$ binport host test app-01
-✓ Route      jump → app-01
-✓ Platform   linux/amd64
+$ binport bastion probe worker-a
+Connection:     supported
+Exec:           supported
+$ binport worker-a rg "authentication timeout" /var/log
+/var/log/auth.log: authentication timeout upstream=identity
 ```
 
 ![binport terminal demo](docs/demo.svg)
@@ -45,10 +45,11 @@ $ binport build .
 $ binport prod rg "authentication timeout" /var/log
 ```
 
-`binport` builds a versioned toolbox of portable command-line programs, selects
-the binary matching the remote Linux host, and transfers only that tool over a
-native Rust SSH connection. The remote host needs no `binport`, `rg`, daemon,
-container runtime, package manager, or root access.
+`binport` is an agentless remote toolbox for SSH hosts, jump servers, and
+enterprise bastions. It builds a versioned toolbox of portable command-line
+programs, selects the binary matching the remote Linux host, and transfers only
+the tool required by the current command. The remote host needs no `binport`,
+`rg`, daemon, container runtime, package manager, or root access.
 
 ## Install
 

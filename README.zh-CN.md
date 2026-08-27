@@ -26,16 +26,15 @@
 
 **工具箱只构建一次，在任意 SSH 主机上直接运行，远端无需安装。**
 
-> **v0.1.5 新功能——不用再手写 ProxyJump。** 两条命令添加跳板机及其后的
-> 目标机，binport 会生成标准、可复用的 SSH 别名，OpenSSH、rsync 和编辑器
-> 插件也能直接使用。
+> **带着自己的工具，穿过堡垒机，直接工作。** binport 使用原生 Rust SSH
+> 穿过直连 SSH、ProxyJump 和应用层企业堡垒机，远端无需安装 Agent。
 
 ```console
-$ binport host add jump root@203.0.113.10
-$ binport host add app-01 root@10.0.0.52 --jump jump
-$ binport host test app-01
-✓ Route      jump → app-01
-✓ Platform   linux/amd64
+$ binport bastion probe worker-a
+Connection:     supported
+Exec:           supported
+$ binport worker-a rg "authentication timeout" /var/log
+/var/log/auth.log: authentication timeout upstream=identity
 ```
 
 ![binport 终端演示](docs/demo.svg)
@@ -45,9 +44,9 @@ $ binport build .
 $ binport prod rg "authentication timeout" /var/log
 ```
 
-`binport` 将常用命令行工具构建成可复现、可移植的工具箱，根据远程
-Linux 主机的架构选择正确的二进制文件，并通过原生 Rust SSH 连接只传输
-当前需要的工具。
+`binport` 是面向 SSH 主机、跳板机和企业堡垒机的无代理远程工具箱。它将
+常用命令行工具构建成可复现、可移植的工具箱，根据远程 Linux 主机的架构
+选择正确的二进制文件，并通过原生 Rust SSH 连接只传输当前需要的工具。
 
 远程主机不需要安装 `binport`、`rg`、守护进程、容器运行时或包管理器，
 也不需要 root 权限。

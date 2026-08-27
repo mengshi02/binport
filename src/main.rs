@@ -19,7 +19,7 @@ use std::process::ExitCode;
 #[command(
     name = "binport",
     version,
-    about = "Build portable toolboxes and run them on SSH hosts"
+    about = "Agentless remote toolbox for SSH hosts, jump servers, and enterprise bastions"
 )]
 struct Cli {
     /// Prompt for an SSH password instead of using keys or an agent

@@ -2,7 +2,7 @@
 name = "binport"
 version = "0.1.5"
 edition = "2024"
-description = "Run local CLI tools on SSH hosts without installing them remotely"
+description = "Agentless remote toolbox for SSH hosts, jump servers, and enterprise bastions"
 license = "MIT"
 repository = "https://github.com/mengshi02/binport"
 readme = "README.md"

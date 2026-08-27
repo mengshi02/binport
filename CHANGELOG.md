@@ -22,6 +22,9 @@ All notable changes to binport are documented here. The format follows
 
 ### Changed
 
+- Reposition binport as an agentless remote toolbox for direct SSH hosts,
+  ProxyJump routes, and enterprise bastions, with a new real terminal demo.
+- Allow native SSH Agent authentication for application-layer bastion routes.
 - Refresh the README recording around managed Host/ProxyJump routing and add
   bilingual troubleshooting guidance for SSH, transfers, checksums, and Linux
   compatibility.

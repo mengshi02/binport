@@ -604,11 +604,13 @@ async fn connect_bastion(
         AuthMethod::with_password(password)
     } else if let Some(password) = bastion_password_for_host(&bastion.host) {
         AuthMethod::with_password(&password)
+    } else if cfg!(unix) && env::var_os("SSH_AUTH_SOCK").is_some() {
+        AuthMethod::with_agent()
     } else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "bastion proxy requires a password for {}; use --password, set BINPORT_BASTION_PASSWORD_{}, or set BINPORT_BASTION_PASSWORD",
+                "bastion proxy requires SSH Agent or password authentication for {}; use --password, set BINPORT_BASTION_PASSWORD_{}, or set BINPORT_BASTION_PASSWORD",
                 bastion.host,
                 bastion_env_suffix(&bastion.host)
             ),

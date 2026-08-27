@@ -4,6 +4,16 @@ The README animation is an interactive terminal recording of real binport
 commands with documentation IP ranges and a temporary SSH configuration. It
 requires no credentials or remote infrastructure.
 
+The current hero recording uses a disposable localhost sshd to exercise the
+real native bastion, execution, cache, and tunnel paths:
+
+```sh
+cargo build --release --locked
+python3 docs/record-demo.py docs/demo-bastion.sh /tmp/binport-demo.cast
+termtosvg render /tmp/binport-demo.cast docs/demo.svg \
+  -t window_frame -D 2000 -M 2000
+```
+
 Build the release binary and smoke-test the deterministic Host/ProxyJump
 transcript:
 
