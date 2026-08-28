@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+📘 **[Complete user guide (简体中文)](docs/USER_GUIDE.zh-CN.md)**
+
 [![CI](https://github.com/mengshi02/binport/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mengshi02/binport/actions/workflows/ci.yml)
 [![Release](https://github.com/mengshi02/binport/actions/workflows/release.yml/badge.svg)](https://github.com/mengshi02/binport/actions/workflows/release.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/mengshi02/binport?display_name=tag&sort=semver)](https://github.com/mengshi02/binport/releases/latest)
@@ -28,8 +30,6 @@
 
 Binport discovers how a host is reached, carries the right portable CLI through
 the route, and runs it without installing packages or a permanent agent remotely.
-
-![Binport v0.2 terminal demo](docs/demo.svg)
 
 ```console
 $ binport host add prod-db                 # guided route discovery

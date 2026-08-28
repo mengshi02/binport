@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+📘 **[完整用户手册：安装、连接向导、Exec-hop、工具箱、Fleet、离线分发与排障](docs/USER_GUIDE.zh-CN.md)**
+
 [![CI](https://github.com/mengshi02/binport/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mengshi02/binport/actions/workflows/ci.yml)
 [![Release](https://github.com/mengshi02/binport/actions/workflows/release.yml/badge.svg)](https://github.com/mengshi02/binport/actions/workflows/release.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/mengshi02/binport?display_name=tag&sort=semver)](https://github.com/mengshi02/binport/releases/latest)
@@ -28,8 +30,6 @@
 
 binport 自动识别目标主机的到达方式，沿着可用路径携带正确的便携 CLI，
 远端无需安装软件包，也无需常驻 Agent。
-
-![Binport v0.2 终端演示](docs/demo.svg)
 
 ```console
 $ binport host add prod-db                 # 向导检测并保存可用路径

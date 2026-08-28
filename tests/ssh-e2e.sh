@@ -56,7 +56,7 @@ cat "$test_root/target_key.pub" >>"$test_root/authorized_keys"
 cp "$test_root/target_key" "$test_root/remote/.ssh/id_ed25519"
 chmod 600 "$test_root/remote/.ssh/id_ed25519"
 
-"$rustc_bin" -C opt-level=1 "$project_root/docs/demo-remote/rg.rs" \
+"$rustc_bin" -C opt-level=1 "$project_root/tests/fixtures/ssh-e2e/rg.rs" \
   -o "$test_root/project/rg"
 printf '%s\n' \
   'TARGET linux/amd64' \
@@ -75,7 +75,7 @@ printf '%s\n' \
   '#!/bin/sh' \
   "export HOME='$test_root/remote'" \
   "export PATH='$test_root/remote/bin:/usr/bin:/bin'" \
-  "export BINPORT_DEMO_LOG='$project_root/docs/demo-remote/auth.log'" \
+  "export BINPORT_E2E_LOG='$project_root/tests/fixtures/ssh-e2e/auth.log'" \
   'exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"' >"$test_root/force-command"
 chmod +x "$test_root/force-command"
 
