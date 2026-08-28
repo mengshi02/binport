@@ -222,8 +222,10 @@ impl NativeSsh {
             });
         }
         if let Some(proxy) = &destination.proxy_jump {
-            // `password` belongs to the target. The jump host uses its own key or agent.
-            let jump = Self::connect_jump(proxy, None).await?;
+            // When --password is used, pass it to the jump host too so password
+            // authentication is available. Without a password, the jump host falls
+            // back to key file or SSH agent authentication.
+            let jump = Self::connect_jump(proxy, password).await?;
             return Self::connect_with_jump(destination, password, &jump).await;
         }
 
