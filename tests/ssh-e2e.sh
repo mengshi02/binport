@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+export LC_ALL=C
 
 # Real localhost SSH integration test. All keys, ports, homes, and remote files
 # are disposable; no network access or long-lived credentials are required.
@@ -10,6 +11,7 @@ target_port=$((entry_port + 1))
 entry_sshd_pid=
 target_sshd_pid=
 http_pid=
+release_http_pid=
 tunnel_pid=
 binport_bin=${BINPORT_BIN:-"$project_root/target/release/binport"}
 binport_hop_bin=${BINPORT_HOP_BIN:-"$project_root/target/release/binport-hop"}
@@ -30,6 +32,10 @@ cleanup() {
   if [ -n "$http_pid" ]; then
     kill "$http_pid" 2>/dev/null || true
     wait "$http_pid" 2>/dev/null || true
+  fi
+  if [ -n "$release_http_pid" ]; then
+    kill "$release_http_pid" 2>/dev/null || true
+    wait "$release_http_pid" 2>/dev/null || true
   fi
   rm -rf "$test_root"
 }
@@ -201,7 +207,28 @@ printf '%s' "$guided_output" | grep -q 'Strategy: exec-hop' || \
   fail "guided setup did not select exec-hop"
 grep -q 'BinportStrategy exec-hop' "$test_root/client/.ssh/binport_config" || \
   fail "guided setup did not persist exec-hop"
-hop_env="BINPORT_HOP_BINARY=$binport_hop_bin"
+release_port=$((target_port + 3))
+package=binport-linux-amd64
+mkdir -p "$test_root/release/$package"
+cp "$binport_hop_bin" "$test_root/release/$package/binport-hop"
+(cd "$test_root/release" && tar -czf "$package.tar.gz" "$package")
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$test_root/release" && sha256sum "$package.tar.gz" >SHA256SUMS)
+else
+  checksum=$(shasum -a 256 "$test_root/release/$package.tar.gz" | awk '{print $1}')
+  printf '%s  %s\n' "$checksum" "$package.tar.gz" >"$test_root/release/SHA256SUMS"
+fi
+python3 -m http.server "$release_port" --bind 127.0.0.1 \
+  --directory "$test_root/release" >"$test_root/release-http.log" 2>&1 &
+release_http_pid=$!
+attempt=0
+while ! curl --fail --silent --max-time 1 \
+  "http://127.0.0.1:$release_port/SHA256SUMS" >/dev/null; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 20 ]; then fail "local helper release mirror did not start"; fi
+  sleep 0.1
+done
+hop_env="BINPORT_RELEASE_BASE=http://127.0.0.1:$release_port"
 hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
