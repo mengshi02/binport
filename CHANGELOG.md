@@ -162,7 +162,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/mengshi02/binport/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mengshi02/binport/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/mengshi02/binport/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/mengshi02/binport/releases/tag/v0.1.4
