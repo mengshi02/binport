@@ -45,11 +45,12 @@ All notable changes to binport are documented here. The format follows
 ### Changed
 
 - Reposition binport as an agentless remote toolbox for direct SSH hosts,
-  ProxyJump routes, and enterprise bastions, with a new real terminal demo.
+  ProxyJump routes, enterprise bastions, and forwarding-restricted exec-hop
+  environments.
 - Allow native SSH Agent authentication for application-layer bastion routes.
-- Refresh the README recording around managed Host/ProxyJump routing and add
-  bilingual troubleshooting guidance for SSH, transfers, checksums, and Linux
-  compatibility.
+- Restructure both READMEs around guided routing and exec-hop, add a complete
+  Chinese v0.2 user guide, and remove recording-only sources from user-facing
+  documentation.
 - Move the `host`, `auth`, local toolbox lifecycle, remote file transfer, and
   OCI Registry command implementations out of the binary entry point into
   focused modules without changing their CLI interfaces.
