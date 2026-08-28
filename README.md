@@ -69,7 +69,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.2.0" \
+BINPORT_VERSION="v0.2.1" \
 sh install.sh
 ```
 

@@ -211,11 +211,20 @@ async fn remote_tty_async(
 fn authentication_hint(host: &str, error: io::Error) -> io::Error {
     let message = error.to_string();
     let lower = message.to_ascii_lowercase();
-    if lower.contains("authentication") || lower.contains("no ssh agent or private key") {
+    if lower.contains("authentication")
+        || lower.contains("no ssh agent or private key")
+        || lower.contains("unable to load key")
+    {
+        let auth_host = binport::host::find(host)
+            .ok()
+            .flatten()
+            .filter(|entry| entry.strategy.as_deref() == Some("exec-hop"))
+            .and_then(|entry| entry.proxy_jump)
+            .unwrap_or_else(|| host.to_owned());
         io::Error::new(
             error.kind(),
             format!(
-                "{message}; run `binport auth setup {host}` for passwordless access or retry with --password"
+                "{message}; authentication failed at entry host {auth_host:?}; run `binport auth setup {auth_host}` for passwordless access or retry with `binport --password {host} ...`"
             ),
         )
     } else {

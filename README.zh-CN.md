@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.2.0" \
+BINPORT_VERSION="v0.2.1" \
 sh install.sh
 ```
 
@@ -85,7 +85,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.2.0 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.2.1 --locked
 ```
 
 ## 不用手写 SSH Config

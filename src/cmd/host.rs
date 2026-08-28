@@ -176,8 +176,6 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
     if args.jump.is_some()
         || args.bastion.is_some()
         || args.exec_hop
-        || args.user.is_some()
-        || args.port != 22
         || args.bastion_user.is_some()
         || args.bastion_account.is_some()
         || args.bastion_port.is_some()
@@ -193,7 +191,11 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
     println!("Configure {}\n", args.name);
     let target = prompt_required("Target (USER@HOST): ")?;
     let (target_user, target_host) = split_destination(&target);
-    let target_user = target_user.unwrap_or_else(default_user);
+    let target_user = args
+        .user
+        .clone()
+        .or(target_user)
+        .unwrap_or_else(default_user);
 
     println!("\nHow is it reached?");
     println!("  1. Direct SSH");
@@ -266,7 +268,7 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
         name: args.name,
         hostname: target_host,
         user: target_user,
-        port: 22,
+        port: args.port,
         proxy_jump,
         strategy: None,
         bastion_proxy,
@@ -280,9 +282,14 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
     println!("\nConfiguration");
     println!("  Target: {}@{}:{}", entry.user, entry.hostname, entry.port);
     println!("  Route:  {}", route_label(&entry));
+    let mut probe = ProbeDecision {
+        offer_exec_hop: false,
+        entry_password: None,
+    };
     if confirm("Test this route before saving?", true)? {
         println!("\nTesting capabilities...");
-        if probe_before_save(&entry, extra_entry.as_ref(), use_password)?
+        probe = probe_before_save(&entry, extra_entry.as_ref(), use_password)?;
+        if probe.offer_exec_hop
             && confirm(
                 "Use native exec-hop with credentials held on the entry host?",
                 true,
@@ -301,16 +308,40 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
     }
     binport::host::add(entry.clone(), args.force)?;
     println!("\n✓ Host saved as {:?}", entry.name);
+    let mut needs_password = false;
+    if entry.strategy.as_deref() == Some("exec-hop")
+        && let (Some(jump_alias), Some(password)) =
+            (entry.proxy_jump.as_deref(), probe.entry_password.as_deref())
+    {
+        println!("\nThe entry-host password was used only for this test and was not saved.");
+        if confirm(
+            &format!("Set up passwordless access to entry host {jump_alias:?} now?"),
+            true,
+        )? {
+            setup_passwordless_entry(jump_alias, password)?;
+        } else {
+            needs_password = true;
+        }
+    }
     println!("\nTry:");
-    println!("  binport {} rg --version", entry.name);
+    if needs_password {
+        println!("  binport --password {} rg --version", entry.name);
+    } else {
+        println!("  binport {} rg --version", entry.name);
+    }
     Ok(0)
+}
+
+struct ProbeDecision {
+    offer_exec_hop: bool,
+    entry_password: Option<String>,
 }
 
 fn probe_before_save(
     entry: &binport::host::HostEntry,
     unsaved_jump: Option<&binport::host::HostEntry>,
     use_password: bool,
-) -> io::Result<bool> {
+) -> io::Result<ProbeDecision> {
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     if let Some(jump_alias) = &entry.proxy_jump {
         let jump_destination = match unsaved_jump {
@@ -344,7 +375,11 @@ fn probe_before_save(
             target_password.as_deref(),
         ));
         print_jump_probe_report(jump_alias, entry, &report);
-        return Ok(report.entry.state == CapabilityState::Supported && report.target.is_none());
+        return Ok(ProbeDecision {
+            offer_exec_hop: report.entry.state == CapabilityState::Supported
+                && report.target.is_none(),
+            entry_password: jump_password,
+        });
     }
 
     let destination = destination_from_entry(entry)?;
@@ -364,7 +399,43 @@ fn probe_before_save(
             println!("  ! The route may still be saved and tested later.");
         }
     }
-    Ok(false)
+    Ok(ProbeDecision {
+        offer_exec_hop: false,
+        entry_password: None,
+    })
+}
+
+fn setup_passwordless_entry(alias: &str, password: &str) -> io::Result<()> {
+    let key = binport::auth::ensure_managed_key(alias)?;
+    let mut destination = Destination::resolve(alias)?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    runtime.block_on(async {
+        let ssh = binport::ssh::NativeSsh::connect(&destination, Some(password)).await?;
+        let (status, _, stderr) = ssh
+            .execute_capture_with_input(
+                binport::auth::install_key_command(),
+                key.public_key.as_bytes().to_vec(),
+            )
+            .await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "entry-host key installation failed: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        destination.identity = Some(key.private_path.clone());
+        let verification = binport::ssh::NativeSsh::connect(&destination, None).await?;
+        let (status, _, stderr) = verification.execute_capture("true").await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "entry-host key verification failed: {}",
+                stderr.trim()
+            )));
+        }
+        Ok::<_, io::Error>(())
+    })?;
+    println!("  ✓ Passwordless access ready for entry host {alias:?}");
+    Ok(())
 }
 
 fn destination_from_entry(entry: &binport::host::HostEntry) -> io::Result<Destination> {
