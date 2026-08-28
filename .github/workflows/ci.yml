@@ -37,6 +37,7 @@ jobs:
       - name: Run native SSH end-to-end test
         env:
           BINPORT_BIN: ${{ github.workspace }}/target/release/binport
+          BINPORT_HOP_BIN: ${{ github.workspace }}/target/release/binport-hop
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes openssh-server

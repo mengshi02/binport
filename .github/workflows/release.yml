@@ -63,6 +63,9 @@ jobs:
           package="binport-${{ matrix.name }}"
           mkdir -p "$package"
           cp "target/${{ matrix.target }}/release/binport" "$package/binport"
+          if [[ "${{ matrix.target }}" == *-unknown-linux-* ]]; then
+            cp "target/${{ matrix.target }}/release/binport-hop" "$package/binport-hop"
+          fi
           cp LICENSE README.md "$package/"
           tar -czf "$package.tar.gz" "$package"
       - name: Package Windows

@@ -3,6 +3,7 @@ use super::runtime::{
     ToolCandidate, ad_hoc_bastion, ad_hoc_route, toolbox_candidates, write_prefixed,
 };
 use binport::catalog::Platform;
+use binport::hop::ExecHop;
 use binport::progress::TransferProgress;
 use binport::ssh::{Destination, NativeSsh, SharedJump, StreamChunk, select_hosts};
 use binport::{cache_check_command, execute_command, probe_execute_command, upload_command};
@@ -145,6 +146,13 @@ async fn remote_tty_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<u32> {
+    if binport::host::find(host)?.is_some_and(|entry| entry.strategy.as_deref() == Some("exec-hop"))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "TTY commands over exec-hop are not supported yet; run a non-interactive command",
+        ));
+    }
     let ssh = if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
         let bastion_dest = Destination::resolve(bastion_alias)?;
         let mut target_dest = Destination::resolve(target_alias)?;
@@ -252,6 +260,11 @@ async fn remote_async(
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<RemoteOutcome> {
+    if let Some(entry) = binport::host::find(host)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        return remote_exec_hop_async(entry, tool, arguments, password).await;
+    }
     if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
         let bastion_dest = Destination::resolve(bastion_alias)?;
         let mut target_dest = Destination::resolve(target_alias)?;
@@ -266,6 +279,110 @@ async fn remote_async(
     }
     let destination = Destination::resolve(host)?;
     remote_destination_async(destination, tool, arguments, password, None).await
+}
+
+async fn remote_exec_hop_async(
+    entry: binport::host::HostEntry,
+    tool: &OsStr,
+    arguments: &[OsString],
+    entry_password: Option<&str>,
+) -> io::Result<RemoteOutcome> {
+    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "exec-hop host is missing its entry host",
+        )
+    })?;
+    let jump_destination = Destination::resolve(jump_alias)?;
+    let target = format!("{}@{}", entry.user, entry.hostname);
+    let hop = ExecHop::connect(&jump_destination, target, entry.port, entry_password, true).await?;
+    let candidates = toolbox_candidates(tool)?;
+    if candidates.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("tool {:?} is not built; run `binport build` first", tool),
+        ));
+    }
+    let remote_for = |platform| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.platform == platform)
+            .map(|candidate| candidate.remote_file.as_str())
+    };
+    let probe_command = probe_execute_command(
+        remote_for(Platform::LinuxAmd64),
+        remote_for(Platform::LinuxArm64),
+        arguments,
+    )?;
+    let (status, stdout, stderr) = hop
+        .execute_capture_with_input(probe_command, Vec::new())
+        .await?;
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    let (protocol, tool_stderr) = stderr_text.split_once('\n').unwrap_or((&stderr_text, ""));
+    let fields = protocol.split_whitespace().collect::<Vec<_>>();
+    if fields.first() != Some(&"__BINPORT__") || fields.len() < 3 {
+        return Err(io::Error::other(format!(
+            "invalid exec-hop bootstrap response: {protocol}"
+        )));
+    }
+    let platform = Platform::parse(fields[2]).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("target platform is not supported: {}", fields[2]),
+        )
+    })?;
+    let (status, stdout, stderr, cache_hit) = if fields[1] == "hit" {
+        (status, stdout, tool_stderr.as_bytes().to_vec(), true)
+    } else if fields[1] == "miss" {
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.platform == platform)
+            .ok_or_else(|| io::Error::other("bootstrap selected a missing toolbox artifact"))?;
+        let total = fs::metadata(&candidate.local_path)?.len();
+        let label = candidate
+            .local_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .map_or_else(|| "tool".to_owned(), |name| format!("upload {name}"));
+        let progress = TransferProgress::new(label, Some(total), true);
+        let (upload_status, _, upload_stderr) = hop
+            .upload_file(
+                upload_command(&candidate.directory, &candidate.remote_file),
+                &candidate.local_path,
+                progress,
+            )
+            .await?;
+        if upload_status != 0 {
+            return Err(io::Error::other(format!(
+                "exec-hop tool upload failed: {}",
+                String::from_utf8_lossy(&upload_stderr).trim()
+            )));
+        }
+        let (status, stdout, stderr) = hop
+            .execute_capture_with_input(
+                execute_command(&candidate.remote_file, arguments)?,
+                Vec::new(),
+            )
+            .await?;
+        (status, stdout, stderr, false)
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "tool is unavailable for target platform {}",
+                platform.name()
+            ),
+        ));
+    };
+    Ok(RemoteOutcome {
+        status,
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        platform,
+        cache_hit,
+        destination: format!("{}@{}:{}", entry.user, entry.hostname, entry.port),
+        proxy_jump: Some(format!("exec-hop:{jump_alias}")),
+    })
 }
 
 async fn remote_destination_async(

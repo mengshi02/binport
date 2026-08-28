@@ -64,7 +64,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.5" \
+BINPORT_VERSION="v0.2.0" \
 sh install.sh
 ```
 
@@ -149,6 +149,10 @@ Add direct hosts and one-hop routes with a small CLI instead of writing
 `ProxyJump` blocks by hand:
 
 ```sh
+# On a new machine, omit DESTINATION to start the guided setup.
+binport host add app-01
+
+# The existing non-interactive form remains available for scripts.
 binport host add jumpserver-51 root@203.0.113.10
 binport host add app-01 root@10.0.0.52 --jump jumpserver-51
 
@@ -156,6 +160,47 @@ binport host ls
 binport host show app-01
 binport host test app-01
 ```
+
+`host test` performs real, bounded capability probes rather than inferring
+support from the route type. It verifies the SSH connection, a marked command,
+lossless stdin/stdout streaming used by file operations, and a `direct-tcpip`
+request, then reports individual timings and policy failures.
+
+The guided setup offers Direct SSH, an SSH jump host, an enterprise bastion,
+and Auto detect. A fresh machine only needs the final `USER@HOST`; if it is not
+directly reachable, Auto detect asks for the machine the user normally connects
+to first. Raw jump-host addresses are saved under a reusable alias, while
+existing aliases from `~/.ssh/config` are reused. Before writing anything, the
+wizard can test the entry host, its forwarding policy, and target authentication
+separately. This distinguishes a blocked route from the common case where the
+route works but the target credential exists only on the jump host.
+
+This release configures direct SSH, one-hop ProxyJump, and the documented
+composite-username bastion presets shown by `binport bastion presets`. Auto
+detect performs bounded direct TCP reachability and then guides selection of a
+normal SSH entry host or enterprise bastion. Interactive menu bastions are
+identified in the wizard, but automatic menu recording/replay is intentionally
+not enabled by this setup flow yet. Normal SSH entry hosts can automatically
+select exec-hop and relay fallback when native forwarding or local target
+credentials are unavailable.
+
+When the entry route works but target credentials exist only on the jump host,
+the wizard can save `BinportStrategy exec-hop`. Non-interactive toolbox commands
+then use a native Rust `binport-hop` helper on the entry host; the helper uses
+that host's SSH configuration and keys and never invokes an external `ssh`
+process. The matching Linux helper is downloaded from the same Binport release,
+verified against its `SHA256SUMS`, cached locally, and uploaded into a
+content-addressed remote cache. Offline/private environments may preseed the
+cache or set `BINPORT_HOP_BINARY` to a trusted helper artifact.
+
+Exec-hop currently covers non-TTY single-host toolbox commands, `cp` in both
+directions, remote-to-remote copies through the client, and `rm`. File payloads
+are streamed through bounded 64 KiB chunks across both SSH legs, so transfer
+memory does not grow with file size. `binport tunnel` also falls back to one
+native helper exec channel per accepted local TCP connection, preserving TCP
+half-close behavior without requiring `direct-tcpip` on the entry host. TTY
+tools and fleet execution still report unsupported instead of silently falling
+back to an external SSH process.
 
 Binport writes standard SSH syntax to `~/.ssh/binport_config` and adds one
 `Include ~/.ssh/binport_config` line to `~/.ssh/config`. Consequently the same
@@ -708,8 +753,9 @@ This is an early Linux-remote-focused release:
   and a binport-managed standard SSH config fragment.
 - Fleet groups: concrete SSH aliases selected by prefix, with bounded parallel
   execution (`--concurrency`, default 10) and a per-host result summary.
-- One-hop `ProxyJump`, application-layer bastion templates, and native local
-  TCP tunnels are supported. Comma-separated/nested jump chains, encrypted
+- One-hop `ProxyJump`, application-layer bastion templates, native local TCP
+  tunnels, and Rust-helper exec-hop command/file/TCP fallback are supported.
+  Nested jump chains, menu recording/replay, exec-hop TTY/fleet mode, encrypted
   private-key prompts, and remote cache cleanup are not implemented yet.
 - Registry support covers anonymous and password-authenticated OCI pull,
   incremental push, and local OCI pack/unpack. Persistent login and custom CAs

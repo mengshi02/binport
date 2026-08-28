@@ -64,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.1.5" \
+BINPORT_VERSION="v0.2.0" \
 sh install.sh
 ```
 
@@ -80,7 +80,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.1.5 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.2.0 --locked
 ```
 
 ## 不用手写 SSH Config
@@ -143,6 +143,10 @@ Tunneling 127.0.0.1:8080 -> 127.0.0.1:3000
 通过简洁命令添加直连主机和一跳路由，不必手写 `ProxyJump`：
 
 ```sh
+# 全新本地环境中省略目标参数，即可启动交互向导
+binport host add app-01
+
+# 自动化脚本仍可使用完整的非交互参数
 binport host add jumpserver-51 root@203.0.113.10
 binport host add app-01 root@10.0.0.52 --jump jumpserver-51
 
@@ -150,6 +154,22 @@ binport host ls
 binport host show app-01
 binport host test app-01
 ```
+
+向导统一提供 Direct SSH、SSH jump host、Enterprise bastion 和 Auto detect。
+新手只需输入最终 `USER@HOST`；直连失败后，再输入平时首先登录的机器。保存前
+binport 会分别检测入口认证、转发策略、目标认证、命令执行和文件流，避免把
+“目标密钥只在跳板机上”误报成普通网络故障。
+
+当本地没有目标凭证，或者入口禁止原生 `direct-tcpip` 时，可以保存
+`BinportStrategy exec-hop`。binport 会把同版本的原生 Rust `binport-hop`
+临时部署到入口机器，并使用入口机器已有的 SSH 配置和密钥连接目标；整个过程
+不会调用外部 `ssh` 命令。helper 从同版本 Release 获取并校验 `SHA256SUMS`，
+离线环境也可以通过 `BINPORT_HOP_BINARY` 提供可信二进制。
+
+exec-hop 当前支持非 TTY 单机工具命令、`cp`、`rm` 和 `tunnel`。文件及工具箱
+使用有背压的 64 KiB 分块流，内存不会随文件大小增长；TCP tunnel 第一版为
+每个本地连接建立一个 helper channel。交互式 TTY、fleet exec-hop 和堡垒机
+菜单自动录制回放不在本版范围内。
 
 binport 使用标准 SSH 语法写入 `~/.ssh/binport_config`，并仅在
 `~/.ssh/config` 中加入一行 `Include ~/.ssh/binport_config`。因此同一别名也

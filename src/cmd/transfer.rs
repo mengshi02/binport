@@ -1,4 +1,5 @@
 use super::runtime::{ad_hoc_bastion, ad_hoc_route};
+use binport::hop::ExecHop;
 use binport::progress::TransferProgress;
 use binport::remote_command;
 use binport::ssh::{Destination, NativeSsh};
@@ -115,11 +116,17 @@ pub fn remove(args: RmArgs, use_password: bool, json: bool) -> io::Result<u8> {
         .transpose()?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let command = remote_command::remove(target.path, args.recursive, args.force)?;
-    let (status, _, stderr) = runtime.block_on(async {
-        connect_host(target.host, password.as_deref())
-            .await?
-            .execute_capture_with_input(&command, Vec::new())
-            .await
+    let (status, stderr) = runtime.block_on(async {
+        if let Some(hop) = connect_exec_hop(target.host, password.as_deref(), !json).await? {
+            let (status, _, stderr) = hop.execute_capture_with_input(command, Vec::new()).await?;
+            Ok::<_, io::Error>((status, stderr))
+        } else {
+            let (status, _, stderr) = connect_host(target.host, password.as_deref())
+                .await?
+                .execute_capture_with_input(&command, Vec::new())
+                .await?;
+            Ok((status, stderr))
+        }
     })?;
     if status != 0 {
         return Err(io::Error::other(format!(
@@ -221,6 +228,54 @@ async fn download_remote_file(
     password: Option<&str>,
     show_progress: bool,
 ) -> io::Result<PathBuf> {
+    if let Some(hop) = connect_exec_hop(source.host, password, show_progress).await? {
+        let size_command = remote_command::file_size(source.path)?;
+        let (size_status, size_stdout, size_stderr) = hop
+            .execute_capture_with_input(size_command, Vec::new())
+            .await?;
+        if size_status != 0 {
+            return Err(io::Error::other(format!(
+                "remote read failed for {}:{}: {}",
+                source.host,
+                source.path,
+                String::from_utf8_lossy(&size_stderr).trim()
+            )));
+        }
+        let total = String::from_utf8_lossy(&size_stdout)
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| io::Error::other("invalid exec-hop file size response"))?;
+        let progress = TransferProgress::new(
+            format!("download {}:{}", source.host, source.path),
+            Some(total),
+            show_progress,
+        );
+        let temp = copy_temp_path();
+        let (status, stderr) = hop
+            .download_file(remote_command::download_file(source.path)?, &temp, progress)
+            .await?;
+        if status != 0 {
+            let _ = fs::remove_file(&temp);
+            return Err(io::Error::other(format!(
+                "remote read failed for {}:{}: {}",
+                source.host,
+                source.path,
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        let received = fs::metadata(&temp)?.len();
+        if received != total {
+            let _ = fs::remove_file(&temp);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "exec-hop download size changed: expected {total} bytes, received {}",
+                    received
+                ),
+            ));
+        }
+        return Ok(temp);
+    }
     let ssh = connect_host(source.host, password).await?;
     let size_command = remote_command::file_size(source.path)?;
     let (size_status, size_stdout, size_stderr) = ssh.execute_capture(&size_command).await?;
@@ -271,6 +326,25 @@ async fn upload_remote_file(
     password: Option<&str>,
     show_progress: bool,
 ) -> io::Result<()> {
+    if let Some(hop) = connect_exec_hop(destination.host, password, show_progress).await? {
+        let total = fs::metadata(source)?.len();
+        let progress = TransferProgress::new(
+            format!("upload {}:{}", destination.host, destination.path),
+            Some(total),
+            show_progress,
+        );
+        let command = remote_command::upload_file(destination.path, source_name)?;
+        let (status, _, stderr) = hop.upload_file(command, source, progress).await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "remote write failed for {}:{}: {}",
+                destination.host,
+                destination.path,
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        return Ok(());
+    }
     let ssh = connect_host(destination.host, password).await?;
     let command = remote_command::upload_file(destination.path, source_name)?;
     let total = fs::metadata(source)?.len();
@@ -289,6 +363,30 @@ async fn upload_remote_file(
         )));
     }
     Ok(())
+}
+
+async fn connect_exec_hop(
+    host: &str,
+    password: Option<&str>,
+    show_progress: bool,
+) -> io::Result<Option<ExecHop>> {
+    let Some(entry) = binport::host::find(host)? else {
+        return Ok(None);
+    };
+    if entry.strategy.as_deref() != Some("exec-hop") {
+        return Ok(None);
+    }
+    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "exec-hop host has no entry host",
+        )
+    })?;
+    let jump = Destination::resolve(jump_alias)?;
+    let target = format!("{}@{}", entry.user, entry.hostname);
+    ExecHop::connect(&jump, target, entry.port, password, show_progress)
+        .await
+        .map(Some)
 }
 
 fn write_local_file(destination: &str, source: &str, input: &Path) -> io::Result<()> {

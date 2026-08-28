@@ -1,5 +1,6 @@
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 #[test]
 fn lists_a_binfile_with_the_short_top_level_command() {
@@ -35,6 +36,31 @@ fn exposes_fleet_lifecycle_commands() {
     ] {
         assert!(help.contains(command), "help is missing {command}");
     }
+}
+
+#[test]
+fn starts_guided_host_setup_when_destination_is_omitted() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_binport"))
+        .env("HOME", home.path())
+        .args(["host", "add", "prod-db"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"root@10.0.0.5\n1\nn\nn\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("How is it reached?"));
+    assert!(stdout.contains("Auto detect (recommended)"));
+    assert!(stdout.contains("Cancelled; no configuration was written."));
+    assert!(!home.path().join(".ssh/binport_config").exists());
 }
 
 #[test]

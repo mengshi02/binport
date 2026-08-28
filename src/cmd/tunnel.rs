@@ -91,6 +91,11 @@ fn parse_tunnel_specs(specs: &[String]) -> io::Result<Vec<TunnelSpec>> {
 }
 
 async fn run_tunnels(host: &str, specs: Vec<TunnelSpec>, password: Option<&str>) -> io::Result<()> {
+    if let Some(entry) = binport::host::find(host)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        return run_exec_hop_tunnels(entry, specs, password).await;
+    }
     let ssh = connect_host(host, password).await?;
     let shared_ssh = Arc::new(RwLock::new(ssh));
 
@@ -143,6 +148,61 @@ async fn run_tunnels(host: &str, specs: Vec<TunnelSpec>, password: Option<&str>)
         let _ = handle.await;
     }
 
+    Ok(())
+}
+
+async fn run_exec_hop_tunnels(
+    entry: binport::host::HostEntry,
+    specs: Vec<TunnelSpec>,
+    password: Option<&str>,
+) -> io::Result<()> {
+    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "exec-hop host has no entry host",
+        )
+    })?;
+    let jump = Destination::resolve(jump_alias)?;
+    let target = format!("{}@{}", entry.user, entry.hostname);
+    let hop =
+        Arc::new(binport::hop::ExecHop::connect(&jump, target, entry.port, password, true).await?);
+    let mut handles = Vec::new();
+    for spec in specs {
+        let listener = TcpListener::bind(("127.0.0.1", spec.local_port)).await?;
+        let actual_port = listener.local_addr()?.port();
+        println!(
+            "Tunneling 127.0.0.1:{} -> {}:{} via exec-hop:{}",
+            actual_port, spec.remote_host, spec.remote_port, jump_alias
+        );
+        let hop = Arc::clone(&hop);
+        handles.push(tokio::spawn(async move {
+            loop {
+                let (stream, address) = match listener.accept().await {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == io::ErrorKind::InvalidInput => break,
+                    Err(error) => {
+                        eprintln!("Accept error: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let hop = Arc::clone(&hop);
+                let remote_host = spec.remote_host.clone();
+                let remote_port = spec.remote_port;
+                tokio::spawn(async move {
+                    eprintln!(
+                        "[tunnel] Connection from {address} -> {remote_host}:{remote_port} via exec-hop"
+                    );
+                    if let Err(error) = hop.relay_tcp(stream, remote_host, remote_port).await {
+                        eprintln!("Connection error: {error}");
+                    }
+                });
+            }
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
     Ok(())
 }
 

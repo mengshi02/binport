@@ -6,8 +6,30 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-28
+
 ### Added
 
+- Add `binport host add NAME` guided setup for fresh clients, covering direct
+  SSH, reusable jump hosts, composite-username enterprise bastions, and a
+  bounded Auto detect flow while preserving the existing scripted form.
+- Add a shared host capability probe that verifies marked command execution,
+  lossless stdin/stdout file streaming, and `direct-tcpip`, with per-capability
+  timing and failure details in text and JSON reports.
+- Probe guided jump routes before saving, separating entry-host authentication,
+  forwarding policy, and target authentication so remote-only target credentials
+  are reported as an exec-hop candidate instead of a generic key failure.
+- Add the versioned native Rust `binport-hop` protocol and helper, including
+  bounded request framing, binary stdin, target exit/stdout/stderr propagation,
+  release-checksum verification, content-addressed deployment, and non-TTY
+  single-host toolbox execution using credentials held on the entry host.
+- Route `cp` uploads/downloads and `rm` through exec-hop, with exact download
+  size validation and bounded 64 KiB incremental payload streaming across both
+  SSH legs; extend Linux SSH CI with a target key available only to the entry
+  host.
+- Add single-connection TCP relay over exec-hop, using one native helper channel
+  for each accepted local connection with bounded backpressure and half-close
+  propagation; cover it with an HTTP tunnel in the dual-SSH Linux E2E test.
 - Add deployment-verified bastion compatibility presets, including
   `h3c-iware-slash`, via `binport bastion presets` and
   `binport host add --bastion-preset`.
@@ -126,7 +148,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mengshi02/binport/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/mengshi02/binport/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/mengshi02/binport/releases/tag/v0.1.4
 [0.1.3]: https://github.com/mengshi02/binport/releases/tag/v0.1.3

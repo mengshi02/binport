@@ -14,6 +14,7 @@ pub struct HostEntry {
     pub user: String,
     pub port: u16,
     pub proxy_jump: Option<String>,
+    pub strategy: Option<String>,
     pub bastion_proxy: Option<String>,
     pub bastion_user: Option<String>,
     pub bastion_account: Option<String>,
@@ -135,6 +136,7 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
                 user: String::new(),
                 port: 22,
                 proxy_jump: None,
+                strategy: None,
                 bastion_proxy: None,
                 bastion_user: None,
                 bastion_account: None,
@@ -153,6 +155,8 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
                 })?;
             } else if key.eq_ignore_ascii_case("proxyjump") {
                 entry.proxy_jump = Some(value.to_owned());
+            } else if key.eq_ignore_ascii_case("binportstrategy") {
+                entry.strategy = Some(value.to_owned());
             } else if key.eq_ignore_ascii_case("bastionproxy") {
                 entry.bastion_proxy = Some(value.to_owned());
             } else if key.eq_ignore_ascii_case("bastionuser") {
@@ -183,7 +187,7 @@ fn parse(source: &str) -> io::Result<Vec<HostEntry>> {
 fn render<'a>(entries: impl Iterator<Item = &'a HostEntry>) -> String {
     let mut output = String::from(
         "# Managed by binport. Use `binport host` to edit.\n\
-         IgnoreUnknown BastionProxy,BastionUser,BastionAccount,BastionPort,BastionPreset,BastionFormat\n\n",
+         IgnoreUnknown BastionProxy,BastionUser,BastionAccount,BastionPort,BastionPreset,BastionFormat,BinportStrategy\n\n",
     );
     for entry in entries {
         output.push_str(&format!(
@@ -192,6 +196,9 @@ fn render<'a>(entries: impl Iterator<Item = &'a HostEntry>) -> String {
         ));
         if let Some(jump) = &entry.proxy_jump {
             output.push_str(&format!("    ProxyJump {jump}\n"));
+        }
+        if let Some(strategy) = &entry.strategy {
+            output.push_str(&format!("    BinportStrategy {strategy}\n"));
         }
         if let Some(bastion) = &entry.bastion_proxy {
             output.push_str(&format!("    BastionProxy {bastion}\n"));
@@ -226,6 +233,21 @@ fn validate_entry(entry: &HostEntry) -> io::Result<()> {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "a host cannot use itself as ProxyJump",
+            ));
+        }
+    }
+    if let Some(strategy) = &entry.strategy {
+        validate_token("route strategy", strategy)?;
+        if strategy != "exec-hop" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unsupported route strategy {strategy:?}"),
+            ));
+        }
+        if entry.proxy_jump.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "exec-hop strategy requires ProxyJump",
             ));
         }
     }
@@ -403,12 +425,14 @@ mod tests {
 
     #[test]
     fn round_trips_managed_hosts() {
-        let source =
-            "# managed\nHost app\n HostName 10.0.0.2\n User deploy\n Port 2202\n ProxyJump jump\n";
+        let source = "# managed\nHost app\n HostName 10.0.0.2\n User deploy\n Port 2202\n ProxyJump jump\n BinportStrategy exec-hop\n";
         let entries = parse(source).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].proxy_jump.as_deref(), Some("jump"));
-        assert!(render(entries.iter()).contains("    ProxyJump jump"));
+        assert_eq!(entries[0].strategy.as_deref(), Some("exec-hop"));
+        let rendered = render(entries.iter());
+        assert!(rendered.contains("    ProxyJump jump"));
+        assert!(rendered.contains("    BinportStrategy exec-hop"));
     }
 
     #[test]
@@ -421,6 +445,7 @@ mod tests {
             user: "root".into(),
             port: 22,
             proxy_jump: None,
+            strategy: None,
             bastion_proxy: None,
             bastion_user: None,
             bastion_account: None,
@@ -471,6 +496,7 @@ mod tests {
             user: "admin".into(),
             port: 22,
             proxy_jump: Some("jump".into()),
+            strategy: None,
             bastion_proxy: Some("10.0.0.1".into()),
             bastion_user: None,
             bastion_account: None,
@@ -489,6 +515,7 @@ mod tests {
             user: "admin".into(),
             port: 22,
             proxy_jump: None,
+            strategy: None,
             bastion_proxy: Some("10.0.0.1".into()),
             bastion_user: Some("operator".into()),
             bastion_account: Some("root".into()),

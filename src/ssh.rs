@@ -56,6 +56,17 @@ pub struct SharedJump {
     client: Client,
 }
 
+impl SharedJump {
+    pub async fn probe_direct_tcpip(&self, host: &str, port: u16) -> io::Result<()> {
+        let target = format!("{host}:{port}");
+        self.client
+            .open_direct_tcpip_channel(target.as_str(), None)
+            .await
+            .map(|_| ())
+            .map_err(io::Error::other)
+    }
+}
+
 impl Destination {
     pub fn resolve(value: &str) -> io::Result<Self> {
         let (requested_user, alias) = value
@@ -152,6 +163,13 @@ fn select_hosts_from_config(source: &str, group: &str) -> Vec<String> {
 impl NativeSsh {
     pub async fn connect_jump(alias: &str, password: Option<&str>) -> io::Result<SharedJump> {
         let destination = Destination::resolve(alias)?;
+        Self::connect_jump_destination(&destination, password).await
+    }
+
+    pub async fn connect_jump_destination(
+        destination: &Destination,
+        password: Option<&str>,
+    ) -> io::Result<SharedJump> {
         if destination.proxy_jump.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -159,7 +177,7 @@ impl NativeSsh {
             ));
         }
         Ok(SharedJump {
-            client: connect_direct(&destination, password).await?,
+            client: connect_direct(destination, password).await?,
         })
     }
 
@@ -456,6 +474,65 @@ impl NativeSsh {
         Ok((status, stderr))
     }
 
+    pub async fn execute_with_prefix_file(
+        &self,
+        command: &str,
+        prefix: Vec<u8>,
+        path: &Path,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
+        let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+        let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+        let (stdin_tx, stdin_rx) = mpsc::channel(8);
+        let path = path.to_owned();
+        let feeder_progress = progress.clone();
+        let feeder = tokio::spawn(async move {
+            stdin_tx.send(prefix).await.map_err(io::Error::other)?;
+            let mut file = tokio::fs::File::open(path).await?;
+            let mut buffer = vec![0_u8; 64 * 1024];
+            loop {
+                let read = file.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                stdin_tx
+                    .send(buffer[..read].to_vec())
+                    .await
+                    .map_err(io::Error::other)?;
+                feeder_progress.inc(read);
+            }
+            let _ = stdin_tx.send(Vec::new()).await;
+            Ok::<_, io::Error>(())
+        });
+        let execution = self.client.execute_io(
+            command,
+            stdout_tx,
+            Some(stderr_tx),
+            Some(stdin_rx),
+            false,
+            None,
+        );
+        tokio::pin!(execution);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let status = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other)?,
+                Some(data) = stdout_rx.recv() => stdout.extend_from_slice(&data),
+                Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
+            }
+        };
+        feeder.await.map_err(io::Error::other)??;
+        while let Ok(data) = stdout_rx.try_recv() {
+            stdout.extend_from_slice(&data);
+        }
+        while let Ok(data) = stderr_rx.try_recv() {
+            stderr.extend_from_slice(&data);
+        }
+        progress.finish();
+        Ok((status, stdout, stderr))
+    }
+
     pub async fn download_file(
         &self,
         command: &str,
@@ -467,6 +544,52 @@ impl NativeSsh {
         let execution =
             self.client
                 .execute_io(command, stdout_tx, Some(stderr_tx), None, false, None);
+        tokio::pin!(execution);
+        let mut file = tokio::fs::File::create(path).await?;
+        let mut stderr = Vec::new();
+        let status = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other)?,
+                Some(data) = stdout_rx.recv() => {
+                    file.write_all(&data).await?;
+                    progress.inc(data.len());
+                },
+                Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
+            }
+        };
+        while let Ok(data) = stdout_rx.try_recv() {
+            file.write_all(&data).await?;
+            progress.inc(data.len());
+        }
+        while let Ok(data) = stderr_rx.try_recv() {
+            stderr.extend_from_slice(&data);
+        }
+        file.flush().await?;
+        progress.finish();
+        Ok((status, stderr))
+    }
+
+    pub async fn download_file_with_input(
+        &self,
+        command: &str,
+        input: Vec<u8>,
+        path: &Path,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>)> {
+        let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+        let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+        let (stdin_tx, stdin_rx) = mpsc::channel(2);
+        stdin_tx.send(input).await.map_err(io::Error::other)?;
+        stdin_tx.send(Vec::new()).await.map_err(io::Error::other)?;
+        drop(stdin_tx);
+        let execution = self.client.execute_io(
+            command,
+            stdout_tx,
+            Some(stderr_tx),
+            Some(stdin_rx),
+            false,
+            None,
+        );
         tokio::pin!(execution);
         let mut file = tokio::fs::File::create(path).await?;
         let mut stderr = Vec::new();
