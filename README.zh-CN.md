@@ -24,25 +24,30 @@
 ![Repository Size](https://img.shields.io/github/repo-size/mengshi02/binport)
 ![Code Size](https://img.shields.io/github/languages/code-size/mengshi02/binport)
 
-**工具箱只构建一次，在任意 SSH 主机上直接运行，远端无需安装。**
+**带着自己的工具，穿过任何 SSH 路径——即使端口转发被禁用。**
 
-> **带着自己的工具，穿过堡垒机，直接工作。** binport 使用原生 Rust SSH
-> 穿过直连 SSH、ProxyJump 和应用层企业堡垒机，远端无需安装 Agent。
+binport 自动识别目标主机的到达方式，沿着可用路径携带正确的便携 CLI，
+远端无需安装软件包，也无需常驻 Agent。
 
-```console
-$ binport bastion probe worker-a
-Connection:     supported
-Exec:           supported
-$ binport worker-a rg "authentication timeout" /var/log
-/var/log/auth.log: authentication timeout upstream=identity
-```
-
-![binport 终端演示](docs/demo.svg)
+![Binport v0.2 终端演示](docs/demo.svg)
 
 ```console
-$ binport build .
-$ binport prod rg "authentication timeout" /var/log
+$ binport host add prod-db                 # 向导检测并保存可用路径
+$ binport prod-db rg "timeout" /var/log   # prod-db 无需预装 rg
 ```
+
+### 一套命令，覆盖复杂 SSH 环境
+
+| 现实环境 | Binport 的处理方式 |
+|---|---|
+| 直连 SSH 或 ProxyJump | 原生 Rust SSH，不启动外部 `ssh`/`scp` |
+| 企业堡垒机 | 厂商登录模板 + 真实能力探测 |
+| 目标密钥只存在于跳板机 | 原生 `binport-hop` 执行回退 |
+| 堡垒机禁用 `direct-tcpip` | 使用 exec-hop TCP relay 暴露内网 HTTP |
+| 远端无 root、包管理器或互联网 | 只上传本次命令需要的工具二进制 |
+
+配置向导会分别检测网络可达性、认证、命令、文件流和端口转发，再把实际可用
+的路径保存为一个别名。执行命令、`cp`、`rm` 和 `tunnel` 都使用同一个别名。
 
 `binport` 是面向 SSH 主机、跳板机和企业堡垒机的无代理远程工具箱。它将
 常用命令行工具构建成可复现、可移植的工具箱，根据远程 Linux 主机的架构

@@ -24,26 +24,31 @@
 ![Repository Size](https://img.shields.io/github/repo-size/mengshi02/binport)
 ![Code Size](https://img.shields.io/github/languages/code-size/mengshi02/binport)
 
-**Build a toolbox once. Run it on any SSH host. Install nothing there.**
+**Your tools. Any server. Even when SSH forwarding is blocked.**
 
-> **Your tools. Any server. Even behind a bastion.** Binport carries portable
-> CLI tools through direct SSH, ProxyJump, and application-layer enterprise
-> bastions using native Rust SSH—without installing an agent on the server.
+Binport discovers how a host is reached, carries the right portable CLI through
+the route, and runs it without installing packages or a permanent agent remotely.
 
-```console
-$ binport bastion probe worker-a
-Connection:     supported
-Exec:           supported
-$ binport worker-a rg "authentication timeout" /var/log
-/var/log/auth.log: authentication timeout upstream=identity
-```
-
-![binport terminal demo](docs/demo.svg)
+![Binport v0.2 terminal demo](docs/demo.svg)
 
 ```console
-$ binport build .
-$ binport prod rg "authentication timeout" /var/log
+$ binport host add prod-db                 # guided route discovery
+$ binport prod-db rg "timeout" /var/log   # rg is not installed on prod-db
 ```
+
+### One command surface for hostile SSH environments
+
+| What you have | What Binport does |
+|---|---|
+| Direct SSH or ProxyJump | Native Rust SSH; no external `ssh`/`scp` process |
+| Enterprise bastion | Vendor presets plus real capability probes |
+| Target key exists only on the jump host | Native `binport-hop` execution fallback |
+| `direct-tcpip` is blocked | Exec-hop TCP relay for private HTTP services |
+| No package manager, root, or internet remotely | Uploads only the required toolbox binary |
+
+The guided setup separates reachability, authentication, command, file-stream,
+and forwarding checks, then saves the working route behind one memorable alias.
+Commands, `cp`, `rm`, and `tunnel` use that same alias.
 
 `binport` is an agentless remote toolbox for SSH hosts, jump servers, and
 enterprise bastions. It builds a versioned toolbox of portable command-line

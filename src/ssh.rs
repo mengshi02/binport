@@ -727,8 +727,8 @@ async fn connect_bastion(
         AuthMethod::with_password(password)
     } else if let Some(password) = bastion_password_for_host(&bastion.host) {
         AuthMethod::with_password(&password)
-    } else if cfg!(unix) && env::var_os("SSH_AUTH_SOCK").is_some() {
-        AuthMethod::with_agent()
+    } else if let Some(auth) = agent_auth_method() {
+        auth
     } else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -747,6 +747,18 @@ async fn connect_bastion(
     )
     .await
     .map_err(io::Error::other)
+}
+
+#[cfg(unix)]
+fn agent_auth_method() -> Option<AuthMethod> {
+    env::var_os("SSH_AUTH_SOCK")
+        .is_some()
+        .then(AuthMethod::with_agent)
+}
+
+#[cfg(not(unix))]
+fn agent_auth_method() -> Option<AuthMethod> {
+    None
 }
 
 fn bastion_env_suffix(host: &str) -> String {
