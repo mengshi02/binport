@@ -6,6 +6,19 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-28
+
+### Fixed
+
+- Complete password-based guided exec-hop setup by offering to install a
+  dedicated key on the entry host instead of printing a command that cannot
+  authenticate after the temporary password is discarded.
+- Report the actual exec-hop entry host in authentication recovery hints.
+- Preserve `--user` and `--port` overrides during interactive host setup.
+- Replace the shared-credential SSH fixture with isolated entry and target
+  servers, and exercise guided setup, execution, file transfer, removal, TCP
+  relay, and entry-authentication failures end to end.
+
 ## [0.2.0] - 2026-08-28
 
 ### Added
