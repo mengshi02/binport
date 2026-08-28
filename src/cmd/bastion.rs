@@ -54,15 +54,42 @@ fn list_presets(json: bool) -> io::Result<u8> {
             serde_json::to_string_pretty(&values).map_err(io::Error::other)?
         );
     } else {
-        println!("PRESET\tFORMAT\tPRODUCT\tSTATUS");
-        for preset in presets {
-            println!(
-                "{}\t{}\t{}\t{}",
-                preset.name, preset.format, preset.product, preset.status
-            );
-        }
+        print!("{}", render_presets_table(presets));
     }
     Ok(0)
+}
+
+fn render_presets_table(presets: &[binport::bastion::Preset]) -> String {
+    const HEADERS: [&str; 4] = ["PRESET", "FORMAT", "PRODUCT", "STATUS"];
+    let name_width = presets
+        .iter()
+        .map(|preset| preset.name.chars().count())
+        .chain([HEADERS[0].len()])
+        .max()
+        .unwrap_or(HEADERS[0].len());
+    let format_width = presets
+        .iter()
+        .map(|preset| preset.format.chars().count())
+        .chain([HEADERS[1].len()])
+        .max()
+        .unwrap_or(HEADERS[1].len());
+    let product_width = presets
+        .iter()
+        .map(|preset| preset.product.chars().count())
+        .chain([HEADERS[2].len()])
+        .max()
+        .unwrap_or(HEADERS[2].len());
+    let mut output = format!(
+        "{:<name_width$}  {:<format_width$}  {:<product_width$}  {}\n",
+        HEADERS[0], HEADERS[1], HEADERS[2], HEADERS[3]
+    );
+    for preset in presets {
+        output.push_str(&format!(
+            "{:<name_width$}  {:<format_width$}  {:<product_width$}  {}\n",
+            preset.name, preset.format, preset.product, preset.status
+        ));
+    }
+    output
 }
 
 fn probe(args: BastionProbeArgs, use_password: bool, json: bool) -> io::Result<u8> {
@@ -179,4 +206,25 @@ fn probe(args: BastionProbeArgs, use_password: bool, json: bool) -> io::Result<u
         }
     }
     Ok(u8::from(exec != "supported"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_table_columns_are_aligned() {
+        let table = render_presets_table(binport::bastion::presets());
+        let mut lines = table.lines();
+        let header = lines.next().unwrap();
+        let format_column = header.find("FORMAT").unwrap();
+        let product_column = header.find("PRODUCT").unwrap();
+        let status_column = header.find("STATUS").unwrap();
+
+        for (line, preset) in lines.zip(binport::bastion::presets()) {
+            assert_eq!(line.find(preset.format), Some(format_column));
+            assert_eq!(line.find(preset.product), Some(product_column));
+            assert_eq!(line.find(preset.status), Some(status_column));
+        }
+    }
 }
