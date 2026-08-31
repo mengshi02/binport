@@ -358,6 +358,7 @@ impl NativeSsh {
             loop {
                 let read = stdin.read(&mut buffer).await?;
                 if read == 0 {
+                    let _ = input_tx.send(Vec::new()).await;
                     break;
                 }
                 let input = buffer[..read].to_vec();
@@ -422,6 +423,7 @@ impl NativeSsh {
             loop {
                 let read = stdin.read(&mut buffer).await?;
                 if read == 0 {
+                    let _ = input_tx.send(Vec::new()).await;
                     break;
                 }
                 let input = buffer[..read].to_vec();
