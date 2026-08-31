@@ -314,12 +314,12 @@ fn authentication_hint(host: &str, error: io::Error) -> io::Error {
 }
 
 #[derive(Debug)]
-struct RemoteOutcome {
-    status: u32,
-    stdout: String,
-    stderr: String,
-    platform: Platform,
-    cache_hit: bool,
+pub(super) struct RemoteOutcome {
+    pub(super) status: u32,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
+    pub(super) platform: Platform,
+    pub(super) cache_hit: bool,
     destination: String,
     proxy_jump: Option<String>,
 }
@@ -344,7 +344,7 @@ fn remote_json(host: &str, outcome: &RemoteOutcome) -> serde_json::Value {
     })
 }
 
-async fn remote_async(
+pub(super) async fn remote_async(
     host: &str,
     tool: &OsStr,
     arguments: &[OsString],
