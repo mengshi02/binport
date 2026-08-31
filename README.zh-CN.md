@@ -171,10 +171,11 @@ binport 会分别检测入口认证、转发策略、目标认证、命令执行
 不会调用外部 `ssh` 命令。helper 从同版本 Release 获取并校验 `SHA256SUMS`，
 离线环境也可以通过 `BINPORT_HOP_BINARY` 提供可信二进制。
 
-exec-hop 当前支持非 TTY 单机工具命令、`cp`、`rm` 和 `tunnel`。文件及工具箱
-使用有背压的 64 KiB 分块流，内存不会随文件大小增长；TCP tunnel 第一版为
-每个本地连接建立一个 helper channel。交互式 TTY、fleet exec-hop 和堡垒机
-菜单自动录制回放不在本版范围内。
+exec-hop 支持最多四层递归远端路由、普通命令、Toolbox、`exec`、`run`、交互式
+TTY、`watch`、`cp`、`rm` 和 `tunnel`。例如将 `343` 的入口配置为已经通过
+`51` 到达的 `35`，binport 会自动展开 `51 → 35 → 343`。文件及工具箱使用有
+背压的 64 KiB 分块流；TCP tunnel 在最终节点运行 Rust stdio relay，不依赖
+SSH `direct-tcpip`。fleet exec-hop 和堡垒机菜单自动录制回放暂不支持。
 
 binport 使用标准 SSH 语法写入 `~/.ssh/binport_config`，并仅在
 `~/.ssh/config` 中加入一行 `Include ~/.ssh/binport_config`。因此同一别名也

@@ -774,9 +774,11 @@ This is an early Linux-remote-focused release:
 - Fleet groups: concrete SSH aliases selected by prefix, with bounded parallel
   execution (`--concurrency`, default 10) and a per-host result summary.
 - One-hop `ProxyJump`, application-layer bastion templates, native local TCP
-  tunnels, and Rust-helper exec-hop command/file/TCP fallback are supported.
-  Nested jump chains, menu recording/replay, exec-hop TTY/fleet mode, encrypted
-  private-key prompts, and remote cache cleanup are not implemented yet.
+  tunnels, and recursive Rust-helper exec-hop routes (up to four remote hops)
+  are supported. Exec-hop covers commands, scripts, toolbox tools, TTY, watch,
+  files, and TCP relay without requiring `direct-tcpip` on the final server.
+  Nested native ProxyJump chains, menu recording/replay, exec-hop fleet mode,
+  encrypted private-key prompts, and remote cache cleanup are not implemented.
 - Registry support covers anonymous and password-authenticated OCI pull,
   incremental push, and local OCI pack/unpack. Persistent login and custom CAs
   are not implemented yet.

@@ -25,19 +25,19 @@ binport tunnel 8080:127.0.0.1:3000 prod-db
 
 ## 2. 支持范围
 
-| 项目 | v0.2 支持范围 |
+| 项目 | 支持范围 |
 |---|---|
 | 本地客户端 | Linux amd64/arm64、macOS amd64/arm64、Windows amd64 |
 | 远程目标 | Linux amd64、Linux arm64 |
-| SSH 路径 | 直连、一跳 ProxyJump、应用层堡垒机、原生 Rust exec-hop |
+| SSH 路径 | 直连、一跳 ProxyJump、应用层堡垒机、最多四层递归 Rust exec-hop |
 | 认证 | SSH Agent（Unix）、未加密私钥、交互密码、Binport 专用 Key |
 | 文件能力 | 上传、下载、远端到远端复制、删除文件和目录 |
 | 网络能力 | 原生 `direct-tcpip`，或 exec-hop TCP relay 回退 |
 | Fleet | SSH Host 前缀分组、并发执行、Doctor、Warm、Watch |
 | Toolbox 分发 | 单文件、OCI image layout、OCI Registry/Harbor |
 
-当前不支持任意层数的 ProxyJump、exec-hop 交互式 TTY、exec-hop Fleet、企业
-堡垒机菜单自动录制回放、Registry 持久登录和自定义 CA。遇到不支持的路径时
+当前不支持任意层数的原生 ProxyJump、exec-hop Fleet、企业堡垒机菜单自动
+录制回放、Registry 持久登录和自定义 CA。遇到不支持的路径时
 Binport 会明确报错，不会静默调用外部 `ssh`。
 
 ## 3. 安装
@@ -148,6 +148,17 @@ binport host add prod-db root@10.0.0.52 --jump jump-a --exec-hop
 binport host show prod-db
 binport prod-db rg --version
 ```
+
+递归路由只需引用上一层已配置主机：
+
+```sh
+binport host add 35 root@10.226.3.5 --jump 51 --exec-hop
+binport host add 343 root@10.226.3.43 --jump 35 --exec-hop
+binport exec 343 -- uname -a       # 自动展开 51 → 35 → 343
+```
+
+最多支持四层远端 hop，并会拒绝循环路由。中间节点目前需要使用相同 CPU 架构；
+Linux amd64 helper 为静态 musl 二进制，可运行在 CentOS 7 等旧 glibc 系统。
 
 Binport 会把同版本的 `binport-hop` 临时部署到入口主机。Helper 使用入口已有的
 SSH 配置和凭证连接目标，全程不调用外部 `ssh`。Helper 和工具都按 SHA-256
@@ -407,7 +418,7 @@ binport doctor @prod        # 检查连接、平台、延迟和远端缓存
 binport warm @prod          # 预先上传完整工具箱
 ```
 
-exec-hop 当前只支持单机非 TTY 执行，不支持 Fleet。
+exec-hop 支持单机 TTY 与非 TTY 执行、Watch、文件和 TCP relay，暂不支持 Fleet。
 
 ## 11. Watch
 
