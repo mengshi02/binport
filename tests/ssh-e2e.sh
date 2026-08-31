@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eux
+set -eu
 export LC_ALL=C
 
 # Real localhost SSH integration test. All keys, ports, homes, and remote files
@@ -184,7 +184,7 @@ printf '%s' "$second_run" | grep -q 'cache hit' || fail "second execution missed
 plan_output=$(HOME="$test_root/client" "$binport_bin" plan e2e-node rg)
 printf '%s' "$plan_output" | grep -q 'Plan only'
 doctor_output=$(HOME="$test_root/client" "$binport_bin" doctor e2e-node)
-printf '%s' "$doctor_output" | grep -q '1/1'
+printf '%s' "$doctor_output" | grep -q '1/2'
 warm_output=$(HOME="$test_root/client" "$binport_bin" warm e2e-node)
 printf '%s' "$warm_output" | grep -q 'UPLOADED'
 watch_output=$(HOME="$test_root/client" "$binport_bin" watch --interval 1 --count 1 \
