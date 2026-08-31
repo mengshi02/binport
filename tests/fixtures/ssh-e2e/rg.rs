@@ -1,6 +1,17 @@
-use std::{env, fs, process};
+use std::{env, ffi::OsStr, fs, io::{Read, Write}, process};
 
 fn main() {
+    if env::current_exe()
+        .ok()
+        .is_some_and(|path| path.file_name() == Some(OsStr::new("btm")))
+    {
+        println!("TTY_READY");
+        std::io::stdout().flush().unwrap();
+        let mut input = [0_u8; 1];
+        std::io::stdin().read_exact(&mut input).unwrap();
+        assert_eq!(input[0], b'q');
+    }
+
     let mut args = env::args().skip(1);
     let Some(pattern) = args.next() else {
         eprintln!("usage: rg PATTERN FILE");

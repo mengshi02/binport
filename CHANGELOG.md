@@ -6,6 +6,19 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-31
+
+### Added
+
+- Run interactive TTY tools such as `btm` through native Rust exec-hop routes.
+
+### Fixed
+
+- Stream terminal input and output through `binport-hop` while keeping its
+  binary protocol outside the target PTY.
+- Cover exec-hop TTY startup in the isolated two-server SSH E2E suite and
+  validate `btm` interaction against a real multi-hop route.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed
@@ -174,7 +187,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/mengshi02/binport/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/mengshi02/binport/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mengshi02/binport/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mengshi02/binport/compare/v0.1.5...v0.2.0

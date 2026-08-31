@@ -41,6 +41,15 @@ async fn run_exec() -> io::Result<u32> {
         ));
     }
     let ssh = NativeSsh::connect(&destination, None).await?;
+    if request.tty {
+        if request.stdin_bytes != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "TTY requests cannot contain a fixed stdin payload",
+            ));
+        }
+        return run_tty(ssh, request.command, stdin).await;
+    }
     let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
     let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
     let (stdin_tx, stdin_rx) = mpsc::channel(8);
@@ -93,6 +102,45 @@ async fn run_exec() -> io::Result<u32> {
     }
     stdout.flush().await?;
     stderr.flush().await?;
+    Ok(status)
+}
+
+async fn run_tty(ssh: NativeSsh, command: String, mut stdin: tokio::io::Stdin) -> io::Result<u32> {
+    let (output_tx, mut output_rx) = mpsc::channel(32);
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let feeder = tokio::spawn(async move {
+        let mut buffer = vec![0_u8; 4096];
+        loop {
+            let read = stdin.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            if input_tx.send(buffer[..read].to_vec()).await.is_err() {
+                break;
+            }
+        }
+        let _ = input_tx.send(Vec::new()).await;
+        Ok::<_, io::Error>(())
+    });
+    let execution = ssh
+        .client()
+        .execute_io(&command, output_tx, None, Some(input_rx), true, None);
+    tokio::pin!(execution);
+    let mut stdout = tokio::io::stdout();
+    let status = loop {
+        tokio::select! {
+            result = &mut execution => break result.map_err(io::Error::other)?,
+            Some(data) = output_rx.recv() => {
+                stdout.write_all(&data).await?;
+                stdout.flush().await?;
+            }
+        }
+    };
+    feeder.abort();
+    while let Ok(data) = output_rx.try_recv() {
+        stdout.write_all(&data).await?;
+    }
+    stdout.flush().await?;
     Ok(status)
 }
 

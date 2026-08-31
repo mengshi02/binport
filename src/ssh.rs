@@ -358,6 +358,7 @@ impl NativeSsh {
             loop {
                 let read = stdin.read(&mut buffer).await?;
                 if read == 0 {
+                    let _ = input_tx.send(Vec::new()).await;
                     break;
                 }
                 let input = buffer[..read].to_vec();
@@ -376,6 +377,76 @@ impl NativeSsh {
         let execution =
             self.client
                 .execute_io(command, output_tx, None, Some(input_rx), true, None);
+        tokio::pin!(execution);
+        let mut stdout = io::stdout();
+        let result = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other),
+                Some(data) = output_rx.recv() => {
+                    stdout.write_all(&data)?;
+                    stdout.flush()?;
+                }
+            }
+        };
+        input_task.abort();
+        while let Ok(data) = output_rx.try_recv() {
+            stdout.write_all(&data)?;
+        }
+        stdout.flush()?;
+        result
+    }
+
+    /// Run a stream protocol over SSH while the local endpoint behaves like a TTY.
+    /// The entry command itself must not receive a PTY because `prefix` is binary.
+    pub async fn execute_tty_with_prefix(
+        &self,
+        command: &str,
+        prefix: Vec<u8>,
+        eof_on_quit: bool,
+    ) -> io::Result<u32> {
+        if !std::io::IsTerminal::is_terminal(&io::stdin())
+            || !std::io::IsTerminal::is_terminal(&io::stdout())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "TTY mode requires an interactive terminal",
+            ));
+        }
+        crossterm::terminal::enable_raw_mode().map_err(io::Error::other)?;
+        let _raw_mode = RawModeGuard;
+        let (output_tx, mut output_rx) = mpsc::channel(32);
+        let (input_tx, input_rx) = mpsc::channel(8);
+        input_tx.send(prefix).await.map_err(io::Error::other)?;
+        let input_task = tokio::spawn(async move {
+            let mut stdin = tokio::io::stdin();
+            let mut buffer = vec![0_u8; 4096];
+            loop {
+                let read = stdin.read(&mut buffer).await?;
+                if read == 0 {
+                    let _ = input_tx.send(Vec::new()).await;
+                    break;
+                }
+                let input = buffer[..read].to_vec();
+                let quits = matches!(input.as_slice(), [3] | [4] | [17])
+                    || (eof_on_quit && matches!(input.as_slice(), [b'q'] | [b'Q']));
+                if input_tx.send(input).await.is_err() {
+                    break;
+                }
+                if quits {
+                    let _ = input_tx.send(Vec::new()).await;
+                    break;
+                }
+            }
+            Ok::<_, io::Error>(())
+        });
+        let execution = self.client.execute_io(
+            command,
+            output_tx.clone(),
+            Some(output_tx),
+            Some(input_rx),
+            false,
+            None,
+        );
         tokio::pin!(execution);
         let mut stdout = io::stdout();
         let result = loop {

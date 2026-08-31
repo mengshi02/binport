@@ -25,6 +25,8 @@ pub struct ExecRequest {
     pub target_port: u16,
     pub command: String,
     pub stdin_bytes: u64,
+    #[serde(default)]
+    pub tty: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -99,7 +101,14 @@ impl ExecRequest {
             target_port,
             command,
             stdin_bytes,
+            tty: false,
         })
+    }
+
+    pub fn new_tty(target: String, target_port: u16, command: String) -> io::Result<Self> {
+        let mut request = Self::new(target, target_port, command, 0)?;
+        request.tty = true;
+        Ok(request)
     }
 }
 
@@ -524,6 +533,15 @@ impl ExecHop {
             .await
     }
 
+    pub async fn execute_tty(&self, command: String, eof_on_quit: bool) -> io::Result<u32> {
+        let request = ExecRequest::new_tty(self.target.clone(), self.target_port, command)?;
+        let header = encode_request_header(&request)?;
+        let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
+        self.entry
+            .execute_tty_with_prefix(&helper_command, header, eof_on_quit)
+            .await
+    }
+
     pub async fn upload_file(
         &self,
         command: String,
@@ -642,6 +660,16 @@ mod tests {
         let (decoded, payload) = read_request(encoded.as_slice()).unwrap();
         assert_eq!(decoded, request);
         assert_eq!(payload, input);
+    }
+
+    #[test]
+    fn tty_request_round_trip_has_no_fixed_payload() {
+        let request = ExecRequest::new_tty("root@10.0.0.5".into(), 22, "btm".into()).unwrap();
+        let encoded = encode_request(&request, &[]).unwrap();
+        let (decoded, payload) = read_request(encoded.as_slice()).unwrap();
+        assert_eq!(decoded, request);
+        assert!(decoded.tty);
+        assert!(payload.is_empty());
     }
 
     #[test]

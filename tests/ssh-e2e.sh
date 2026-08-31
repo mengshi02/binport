@@ -72,7 +72,8 @@ chmod 600 "$test_root/entry/.ssh/id_ed25519" "$test_root/entry/.ssh/id_rsa"
   -o "$test_root/project/rg"
 printf '%s\n' \
   'TARGET linux/amd64' \
-  'COPY ./rg rg --target linux/amd64' >"$test_root/project/Binfile"
+  'COPY ./rg rg --target linux/amd64' \
+  'COPY ./rg btm --target linux/amd64' >"$test_root/project/Binfile"
 
 # Keep platform detection deterministic on both amd64 and arm64 CI runners.
 printf '%s\n' \
@@ -183,7 +184,7 @@ printf '%s' "$second_run" | grep -q 'cache hit' || fail "second execution missed
 plan_output=$(HOME="$test_root/client" "$binport_bin" plan e2e-node rg)
 printf '%s' "$plan_output" | grep -q 'Plan only'
 doctor_output=$(HOME="$test_root/client" "$binport_bin" doctor e2e-node)
-printf '%s' "$doctor_output" | grep -q '1/1'
+printf '%s' "$doctor_output" | grep -q '1/2'
 warm_output=$(HOME="$test_root/client" "$binport_bin" warm e2e-node)
 printf '%s' "$warm_output" | grep -q 'UPLOADED'
 watch_output=$(HOME="$test_root/client" "$binport_bin" watch --interval 1 --count 1 \
@@ -235,6 +236,23 @@ hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop command output was not returned"
+
+set +e
+if [ "$(uname -s)" = Linux ]; then
+  tty_output=$(timeout 5s script -q -e -c \
+    "exec env HOME='$test_root/client' '$hop_env' '$binport_bin' e2e-hop btm 'authentication timeout' /var/log/auth.log" \
+    /dev/null 2>&1)
+else
+  tty_output=$({ sleep 2; printf q; } | script -q /dev/null env HOME="$test_root/client" "$hop_env" \
+    "$binport_bin" e2e-hop btm 'authentication timeout' /var/log/auth.log 2>&1)
+fi
+tty_status=$?
+set -e
+if [ "$tty_status" -ne 0 ] && [ "$tty_status" -ne 124 ]; then
+  fail "exec-hop TTY exited $tty_status: $tty_output"
+fi
+printf '%s' "$tty_output" | grep -q 'TTY_READY' || \
+  fail "exec-hop TTY startup output was not returned"
 
 printf '%s\n' 'round-trip over native exec-hop' >"$test_root/hop-local.txt"
 hop_remote="$test_root/target/hop-copied.txt"
