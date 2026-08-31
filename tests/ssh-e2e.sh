@@ -248,7 +248,7 @@ printf '%s' "$guided_output" | grep -q 'Strategy: exec-hop' || \
   fail "guided setup did not select exec-hop"
 grep -q 'BinportStrategy exec-hop' "$test_root/client/.ssh/binport_config" || \
   fail "guided setup did not persist exec-hop"
-release_port=$((target_port + 3))
+release_port=$((deep_port + 1))
 package=binport-linux-amd64
 mkdir -p "$test_root/release/$package"
 cp "$binport_hop_bin" "$test_root/release/$package/binport-hop"
@@ -329,8 +329,8 @@ env HOME="$test_root/client" "$hop_env" "$binport_bin" rm \
   "e2e-hop:$hop_remote" >/dev/null
 test ! -e "$hop_remote" || fail "exec-hop remote file was not removed"
 
-http_port=$((target_port + 1))
-local_tunnel_port=$((target_port + 2))
+http_port=$((deep_port + 2))
+local_tunnel_port=$((deep_port + 3))
 python3 -m http.server "$http_port" --bind 127.0.0.1 \
   --directory "$test_root/target" >"$test_root/http.log" 2>&1 &
 http_pid=$!
@@ -350,6 +350,26 @@ while ! curl --fail --silent --max-time 1 "http://127.0.0.1:$local_tunnel_port/"
 done
 grep -q 'Directory listing' "$test_root/tunnel-response.html" || \
   fail "exec-hop TCP relay returned an unexpected response"
+kill "$tunnel_pid" 2>/dev/null || true
+wait "$tunnel_pid" 2>/dev/null || true
+tunnel_pid=
+deep_tunnel_port=$((deep_port + 4))
+env HOME="$test_root/client" "$hop_env" "$binport_bin" tunnel \
+  "$deep_tunnel_port:127.0.0.1:$http_port" e2e-deep \
+  >"$test_root/deep-tunnel.log" 2>&1 &
+tunnel_pid=$!
+attempt=0
+while ! curl --fail --silent --max-time 1 "http://127.0.0.1:$deep_tunnel_port/" \
+  >"$test_root/deep-tunnel-response.html"; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 40 ]; then
+    sed -n '1,160p' "$test_root/deep-tunnel.log" >&2
+    fail "recursive exec-hop TCP relay did not become ready"
+  fi
+  sleep 0.1
+done
+grep -q 'Directory listing' "$test_root/deep-tunnel-response.html" || \
+  fail "recursive exec-hop TCP relay returned an unexpected response"
 
 # An entry authentication failure must identify the entry, not the target alias.
 mv "$test_root/client_key" "$test_root/client_key.disabled"
