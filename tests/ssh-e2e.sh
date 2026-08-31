@@ -236,6 +236,17 @@ hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop command output was not returned"
 
+if [ "$(uname -s)" = Linux ]; then
+  tty_output=$(script -q -e -c \
+    "env HOME='$test_root/client' '$hop_env' '$binport_bin' --tty e2e-hop rg 'authentication timeout' /var/log/auth.log" \
+    /dev/null)
+else
+  tty_output=$(script -q /dev/null env HOME="$test_root/client" "$hop_env" \
+    "$binport_bin" --tty e2e-hop rg 'authentication timeout' /var/log/auth.log)
+fi
+printf '%s' "$tty_output" | grep -q 'authentication timeout upstream=identity' || \
+  fail "exec-hop TTY command output was not returned"
+
 printf '%s\n' 'round-trip over native exec-hop' >"$test_root/hop-local.txt"
 hop_remote="$test_root/target/hop-copied.txt"
 env HOME="$test_root/client" "$hop_env" "$binport_bin" cp \
