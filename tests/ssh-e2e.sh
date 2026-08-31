@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -eux
 export LC_ALL=C
 
 # Real localhost SSH integration test. All keys, ports, homes, and remote files
