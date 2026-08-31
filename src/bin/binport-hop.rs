@@ -1,5 +1,8 @@
 use binport::hop;
+use binport::progress::TransferProgress;
 use binport::ssh::{Destination, NativeSsh};
+use std::ffi::OsString;
+use std::fs;
 use std::io;
 use std::process::ExitCode;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,6 +44,9 @@ async fn run_exec() -> io::Result<u32> {
         ));
     }
     let ssh = NativeSsh::connect(&destination, None).await?;
+    if !request.remaining.is_empty() {
+        return run_nested_exec(ssh, request, stdin).await;
+    }
     if request.tty {
         if request.stdin_bytes != 0 {
             return Err(io::Error::new(
@@ -94,6 +100,129 @@ async fn run_exec() -> io::Result<u32> {
         }
     };
     feeder.await.map_err(io::Error::other)??;
+    while let Ok(data) = stdout_rx.try_recv() {
+        stdout.write_all(&data).await?;
+    }
+    while let Ok(data) = stderr_rx.try_recv() {
+        stderr.write_all(&data).await?;
+    }
+    stdout.flush().await?;
+    stderr.flush().await?;
+    Ok(status)
+}
+
+async fn run_nested_exec(
+    ssh: NativeSsh,
+    mut request: hop::ExecRequest,
+    stdin: tokio::io::Stdin,
+) -> io::Result<u32> {
+    let helper = install_self(&ssh).await?;
+    let next = request.remaining.remove(0);
+    request.target = next.target;
+    request.target_port = next.port;
+    let header = hop::encode_request_header(&request)?;
+    let command = binport::execute_command(&helper, &[] as &[OsString])?;
+    relay_process(ssh, command, header, stdin).await
+}
+
+async fn install_self(ssh: &NativeSsh) -> io::Result<String> {
+    let (status, stdout, stderr) = ssh.execute_capture("uname -s; uname -m").await?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "cannot detect nested entry platform: {}",
+            stderr.trim()
+        )));
+    }
+    let mut lines = stdout.lines();
+    let target_platform = binport::catalog::Platform::from_uname(
+        lines.next().unwrap_or_default(),
+        lines.next().unwrap_or_default(),
+    )
+    .ok_or_else(|| io::Error::other("nested entry platform is unsupported"))?;
+    let current_platform = if cfg!(target_arch = "x86_64") {
+        binport::catalog::Platform::LinuxAmd64
+    } else {
+        binport::catalog::Platform::LinuxArm64
+    };
+    if target_platform != current_platform {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "nested exec-hop changes architecture from {} to {}; mixed-architecture chains are not supported yet",
+                current_platform.name(),
+                target_platform.name()
+            ),
+        ));
+    }
+    let local = std::env::current_exe()?;
+    let hash = binport::sha256_file(&local)?;
+    let (directory, remote) = binport::remote_paths(&hash, "binport-hop");
+    let (cached, _, _) = ssh
+        .execute_capture_with_input(&binport::cache_check_command(&remote), Vec::new())
+        .await?;
+    if cached != 0 {
+        let size = fs::metadata(&local)?.len();
+        let (status, stderr) = ssh
+            .upload_file(
+                &binport::upload_command(&directory, &remote),
+                &local,
+                TransferProgress::new("binport-hop", Some(size), false),
+            )
+            .await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "cannot install helper on nested entry: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+    }
+    Ok(remote)
+}
+
+async fn relay_process(
+    ssh: NativeSsh,
+    command: String,
+    header: Vec<u8>,
+    mut stdin: tokio::io::Stdin,
+) -> io::Result<u32> {
+    let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+    let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+    let (stdin_tx, stdin_rx) = mpsc::channel(8);
+    let feeder = tokio::spawn(async move {
+        stdin_tx.send(header).await.map_err(io::Error::other)?;
+        let mut buffer = vec![0_u8; 64 * 1024];
+        loop {
+            let read = stdin.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            stdin_tx
+                .send(buffer[..read].to_vec())
+                .await
+                .map_err(io::Error::other)?;
+        }
+        let _ = stdin_tx.send(Vec::new()).await;
+        Ok::<_, io::Error>(())
+    });
+    let execution = ssh.client().execute_io(
+        &command,
+        stdout_tx,
+        Some(stderr_tx),
+        Some(stdin_rx),
+        false,
+        None,
+    );
+    tokio::pin!(execution);
+    let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+    let status = loop {
+        tokio::select! {
+            result = &mut execution => break result.map_err(io::Error::other)?,
+            Some(data) = stdout_rx.recv() => stdout.write_all(&data).await?,
+            Some(data) = stderr_rx.recv() => stderr.write_all(&data).await?,
+        }
+    };
+    feeder.abort();
     while let Ok(data) = stdout_rx.try_recv() {
         stdout.write_all(&data).await?;
     }

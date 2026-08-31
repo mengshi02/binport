@@ -162,10 +162,7 @@ async fn run_exec_hop_tunnels(
             "exec-hop host has no entry host",
         )
     })?;
-    let jump = Destination::resolve(jump_alias)?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
-    let hop =
-        Arc::new(binport::hop::ExecHop::connect(&jump, target, entry.port, password, true).await?);
+    let hop = Arc::new(binport::hop::ExecHop::connect_host(&entry, password, true).await?);
     let mut handles = Vec::new();
     for spec in specs {
         let listener = TcpListener::bind(("127.0.0.1", spec.local_port)).await?;

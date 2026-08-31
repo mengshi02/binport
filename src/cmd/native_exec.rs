@@ -103,21 +103,7 @@ async fn execute_async(
     if let Some(entry) = binport::host::find(target)?
         && entry.strategy.as_deref() == Some("exec-hop")
     {
-        let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "exec-hop route has no entry host",
-            )
-        })?;
-        let jump = Destination::resolve(jump_alias)?;
-        let hop = ExecHop::connect(
-            &jump,
-            format!("{}@{}", entry.user, entry.hostname),
-            entry.port,
-            password,
-            !json,
-        )
-        .await?;
+        let hop = ExecHop::connect_host(&entry, password, !json).await?;
         if tty {
             return hop
                 .execute_tty(command, false)

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -27,6 +28,15 @@ pub struct ExecRequest {
     pub stdin_bytes: u64,
     #[serde(default)]
     pub tty: bool,
+    #[serde(default)]
+    pub remaining: Vec<HopTarget>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HopTarget {
+    pub target: String,
+    pub port: u16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -102,6 +112,7 @@ impl ExecRequest {
             command,
             stdin_bytes,
             tty: false,
+            remaining: Vec::new(),
         })
     }
 
@@ -453,6 +464,48 @@ pub struct ExecHop {
     target: String,
     target_port: u16,
     remote_helper: String,
+    remaining: Vec<HopTarget>,
+}
+
+const MAX_EXEC_HOPS: usize = 4;
+
+fn resolve_host_chain(
+    final_entry: &crate::host::HostEntry,
+) -> io::Result<(Destination, Vec<HopTarget>)> {
+    let mut route = Vec::new();
+    let mut current = final_entry.clone();
+    let mut visited = HashSet::new();
+    loop {
+        if !visited.insert(current.name.clone()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("exec-hop route contains a cycle at {:?}", current.name),
+            ));
+        }
+        route.push(HopTarget {
+            target: format!("{}@{}", current.user, current.hostname),
+            port: current.port,
+        });
+        if route.len() > MAX_EXEC_HOPS {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("exec-hop routes support at most {MAX_EXEC_HOPS} remote hops"),
+            ));
+        }
+        let parent = current.proxy_jump.as_deref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("exec-hop host {:?} has no entry host", current.name),
+            )
+        })?;
+        match crate::host::find(parent)? {
+            Some(entry) if entry.strategy.as_deref() == Some("exec-hop") => current = entry,
+            _ => {
+                route.reverse();
+                return Ok((Destination::resolve(parent)?, route));
+            }
+        }
+    }
 }
 
 impl ExecHop {
@@ -512,7 +565,27 @@ impl ExecHop {
             target,
             target_port,
             remote_helper,
+            remaining: Vec::new(),
         })
+    }
+
+    pub async fn connect_host(
+        entry: &crate::host::HostEntry,
+        entry_password: Option<&str>,
+        show_progress: bool,
+    ) -> io::Result<Self> {
+        let (destination, mut route) = resolve_host_chain(entry)?;
+        let first = route.remove(0);
+        let mut hop = Self::connect(
+            &destination,
+            first.target,
+            first.port,
+            entry_password,
+            show_progress,
+        )
+        .await?;
+        hop.remaining = route;
+        Ok(hop)
     }
 
     pub async fn execute_capture_with_input(
@@ -526,6 +599,8 @@ impl ExecHop {
             command,
             input.len() as u64,
         )?;
+        let mut request = request;
+        request.remaining = self.remaining.clone();
         let payload = encode_request(&request, &input)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
         self.entry
@@ -535,6 +610,8 @@ impl ExecHop {
 
     pub async fn execute_tty(&self, command: String, eof_on_quit: bool) -> io::Result<u32> {
         let request = ExecRequest::new_tty(self.target.clone(), self.target_port, command)?;
+        let mut request = request;
+        request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
         self.entry
@@ -550,6 +627,8 @@ impl ExecHop {
     ) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
         let size = fs::metadata(path)?.len();
         let request = ExecRequest::new(self.target.clone(), self.target_port, command, size)?;
+        let mut request = request;
+        request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
         self.entry
@@ -564,6 +643,8 @@ impl ExecHop {
         progress: TransferProgress,
     ) -> io::Result<(u32, Vec<u8>)> {
         let request = ExecRequest::new(self.target.clone(), self.target_port, command, 0)?;
+        let mut request = request;
+        request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
         self.entry

@@ -801,17 +801,13 @@ fn test_exec_hop(
             "exec-hop host has no entry host",
         )
     })?;
-    let jump = Destination::resolve(jump_alias)?;
     let password = use_password
         .then(|| rpassword::prompt_password("Entry-host SSH password: "))
         .transpose()?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let started = std::time::Instant::now();
     let (command_result, stream_result) = runtime.block_on(async {
-        let hop =
-            binport::hop::ExecHop::connect(&jump, target, entry.port, password.as_deref(), !json)
-                .await?;
+        let hop = binport::hop::ExecHop::connect_host(entry, password.as_deref(), !json).await?;
         let command = hop
             .execute_capture_with_input(
                 "printf 'BINPORT_HOP_OK\\n'; uname -s; uname -m".to_owned(),
