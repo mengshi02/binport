@@ -239,11 +239,11 @@ printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' |
 
 set +e
 if [ "$(uname -s)" = Linux ]; then
-  tty_output=$(printf q | timeout 20s script -q -e -c \
+  tty_output=$({ sleep 2; printf q; } | timeout 20s script -q -e -c \
     "env HOME='$test_root/client' '$hop_env' '$binport_bin' e2e-hop btm 'authentication timeout' /var/log/auth.log" \
     /dev/null 2>&1)
 else
-  tty_output=$(printf q | script -q /dev/null env HOME="$test_root/client" "$hop_env" \
+  tty_output=$({ sleep 2; printf q; } | script -q /dev/null env HOME="$test_root/client" "$hop_env" \
     "$binport_bin" e2e-hop btm 'authentication timeout' /var/log/auth.log 2>&1)
 fi
 tty_status=$?
