@@ -237,9 +237,9 @@ printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' |
   fail "exec-hop command output was not returned"
 
 if [ "$(uname -s)" = Linux ]; then
-  tty_output=$(script -q -e -c \
+  tty_output=$(timeout 20s script -q -e -c \
     "env HOME='$test_root/client' '$hop_env' '$binport_bin' --tty e2e-hop rg 'authentication timeout' /var/log/auth.log" \
-    /dev/null)
+    /dev/null </dev/null)
 else
   tty_output=$(script -q /dev/null env HOME="$test_root/client" "$hop_env" \
     "$binport_bin" --tty e2e-hop rg 'authentication timeout' /var/log/auth.log)
