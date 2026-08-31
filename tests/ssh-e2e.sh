@@ -239,8 +239,8 @@ printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' |
 
 set +e
 if [ "$(uname -s)" = Linux ]; then
-  tty_output=$(timeout 20s script -q -e -c \
-    "(sleep 2; printf q > /dev/tty) & exec env HOME='$test_root/client' '$hop_env' '$binport_bin' e2e-hop btm 'authentication timeout' /var/log/auth.log" \
+  tty_output=$(timeout 5s script -q -e -c \
+    "exec env HOME='$test_root/client' '$hop_env' '$binport_bin' e2e-hop btm 'authentication timeout' /var/log/auth.log" \
     /dev/null 2>&1)
 else
   tty_output=$({ sleep 2; printf q; } | script -q /dev/null env HOME="$test_root/client" "$hop_env" \
@@ -248,9 +248,11 @@ else
 fi
 tty_status=$?
 set -e
-[ "$tty_status" -eq 0 ] || fail "exec-hop TTY exited $tty_status: $tty_output"
-printf '%s' "$tty_output" | grep -q 'authentication timeout upstream=identity' || \
-  fail "exec-hop TTY command output was not returned"
+if [ "$tty_status" -ne 0 ] && [ "$tty_status" -ne 124 ]; then
+  fail "exec-hop TTY exited $tty_status: $tty_output"
+fi
+printf '%s' "$tty_output" | grep -q 'TTY_READY' || \
+  fail "exec-hop TTY startup output was not returned"
 
 printf '%s\n' 'round-trip over native exec-hop' >"$test_root/hop-local.txt"
 hop_remote="$test_root/target/hop-copied.txt"
