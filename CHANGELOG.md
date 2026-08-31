@@ -6,6 +6,18 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+
+- Try multiple SSH identity files for direct and ProxyJump authentication,
+  matching OpenSSH behavior when an entry host has several default keys and
+  the first key is not authorized on the target.
+- Attribute `binport-hop` authentication failures to the target side instead
+  of incorrectly recommending `auth setup` for an already-working entry host.
+- Exercise rejected-first-key fallback in the isolated two-server SSH E2E and
+  retain Linux CI binaries for validation against real routes.
+
 ## [0.2.1] - 2026-08-28
 
 ### Fixed
@@ -162,7 +174,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/mengshi02/binport/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mengshi02/binport/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mengshi02/binport/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/mengshi02/binport/compare/v0.1.4...v0.1.5
