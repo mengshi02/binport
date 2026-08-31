@@ -275,7 +275,7 @@ async fn run_tty(ssh: NativeSsh, command: String, mut stdin: tokio::io::Stdin) -
 
 async fn run_relay() -> io::Result<u32> {
     let mut stdin = tokio::io::stdin();
-    let request = hop::read_relay_header_async(&mut stdin).await?;
+    let mut request = hop::read_relay_header_async(&mut stdin).await?;
     let mut destination = Destination::resolve(&request.target)?;
     destination.port = request.target_port;
     if destination.proxy_jump.is_some() || destination.bastion_proxy.is_some() {
@@ -285,6 +285,15 @@ async fn run_relay() -> io::Result<u32> {
         ));
     }
     let ssh = NativeSsh::connect(&destination, None).await?;
+    if !request.remaining.is_empty() {
+        let helper = install_self(&ssh).await?;
+        let next = request.remaining.remove(0);
+        request.target = next.target;
+        request.target_port = next.port;
+        let header = hop::encode_relay_header(&request)?;
+        let command = binport::execute_command(&helper, &[OsString::from("--relay")])?;
+        return relay_process(ssh, command, header, stdin).await;
+    }
     let remote = format!("{}:{}", request.remote_host, request.remote_port);
     let channel = ssh
         .client()

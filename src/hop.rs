@@ -47,6 +47,8 @@ pub struct RelayRequest {
     pub target_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
+    #[serde(default)]
+    pub remaining: Vec<HopTarget>,
 }
 
 impl RelayRequest {
@@ -76,6 +78,7 @@ impl RelayRequest {
             target_port,
             remote_host,
             remote_port,
+            remaining: Vec::new(),
         })
     }
 }
@@ -664,6 +667,8 @@ impl ExecHop {
             remote_host,
             remote_port,
         )?;
+        let mut request = request;
+        request.remaining = self.remaining.clone();
         let header = encode_relay_header(&request)?;
         let helper_command =
             crate::execute_command(&self.remote_helper, &[OsString::from("--relay")])?;
