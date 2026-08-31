@@ -684,14 +684,21 @@ fn list(json: bool) -> io::Result<u8> {
             .map_err(io::Error::other)?
         );
     } else {
-        println!("HOST\tDESTINATION\tROUTE");
-        for entry in entries {
-            let route = route_label(&entry);
-            println!(
-                "{}\t{}@{}:{}\t{route}",
-                entry.name, entry.user, entry.hostname, entry.port,
-            );
-        }
+        let rows = entries
+            .into_iter()
+            .map(|entry| {
+                let route = route_label(&entry);
+                vec![
+                    entry.name,
+                    format!("{}@{}:{}", entry.user, entry.hostname, entry.port),
+                    route,
+                ]
+            })
+            .collect::<Vec<_>>();
+        print!(
+            "{}",
+            super::table::render(&["HOST", "DESTINATION", "ROUTE"], &rows)
+        );
     }
     Ok(0)
 }

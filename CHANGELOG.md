@@ -6,6 +6,15 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-31
+
+### Fixed
+
+- Route `watch` snapshots through configured exec-hop routes instead of trying
+  to authenticate directly to the target.
+- Align built-in command tables using rendered Unicode width rather than tabs,
+  including `ls`, `host ls`, `plan`, and `bastion presets`.
+
 ## [0.2.3] - 2026-08-31
 
 ### Added
@@ -187,7 +196,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/mengshi02/binport/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/mengshi02/binport/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/mengshi02/binport/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/mengshi02/binport/compare/v0.2.0...v0.2.1

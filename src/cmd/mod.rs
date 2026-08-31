@@ -7,6 +7,7 @@ pub mod plan;
 pub mod registry;
 pub mod remote;
 pub mod runtime;
+pub mod table;
 pub mod transfer;
 pub mod tunnel;
 pub mod watch;

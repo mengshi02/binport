@@ -70,7 +70,7 @@ pub fn build(args: BuildArgs) -> io::Result<u8> {
 
 pub fn list(args: ProjectArgs) -> io::Result<u8> {
     let binfile = args.path.join("Binfile");
-    println!("TOOL\tREPLACES\tDESCRIPTION\tVERSION\tPLATFORMS");
+    let mut rows = Vec::new();
     if binfile.is_file() {
         let spec = binport::binfile::Binfile::read(&binfile)?;
         let platforms = spec
@@ -87,21 +87,22 @@ pub fn list(args: ProjectArgs) -> io::Result<u8> {
                     .map(|entry| entry.version.clone())
                     .unwrap_or_else(|| "latest".into())
             });
-            println!(
-                "{}\t{}\t{}\t{}\t{}",
-                tool.name,
-                catalog::replacement(&tool.name),
-                catalog::description(&tool.name),
+            rows.push(vec![
+                tool.name.clone(),
+                catalog::replacement(&tool.name).into(),
+                catalog::description(&tool.name).into(),
                 version,
-                platforms
-            );
+                platforms.clone(),
+            ]);
         }
         for copy in spec.copies {
-            println!(
-                "{}\t-\tcustom tool\tlocal\t{}",
+            rows.push(vec![
                 copy.name,
-                copy.platform.name()
-            );
+                "-".into(),
+                "custom tool".into(),
+                "local".into(),
+                copy.platform.name().into(),
+            ]);
         }
     } else {
         let lock: toolbox::Lockfile =
@@ -116,14 +117,22 @@ pub fn list(args: ProjectArgs) -> io::Result<u8> {
         }
         for ((name, version), mut platforms) in tools {
             platforms.sort();
-            println!(
-                "{name}\t{}\t{}\t{version}\t{}",
-                catalog::replacement(&name),
-                catalog::description(&name),
-                platforms.join(", ")
-            );
+            rows.push(vec![
+                name.clone(),
+                catalog::replacement(&name).into(),
+                catalog::description(&name).into(),
+                version,
+                platforms.join(", "),
+            ]);
         }
     }
+    print!(
+        "{}",
+        super::table::render(
+            &["TOOL", "REPLACES", "DESCRIPTION", "VERSION", "PLATFORMS"],
+            &rows,
+        )
+    );
     Ok(0)
 }
 

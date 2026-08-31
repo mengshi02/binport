@@ -1,5 +1,5 @@
 use super::fleet::prepare_connections;
-use super::remote::run_remote;
+use super::remote::{remote_async, run_remote};
 use super::runtime::{ToolCandidate, toolbox_candidates, write_prefixed};
 use binport::catalog::Platform;
 use binport::ssh::{Destination, NativeSsh, SharedJump, select_hosts};
@@ -163,15 +163,21 @@ async fn watch_async(
             let permit_pool = Arc::clone(&semaphore);
             let candidates = Arc::clone(&candidates);
             let arguments = args.arguments.clone();
+            let tool = args.tool.clone();
             let password = password.clone();
             tasks.spawn(async move {
                 let _permit = permit_pool
                     .acquire_owned()
                     .await
                     .map_err(io::Error::other)?;
-                let result =
-                    watch_target_once(&mut target, &candidates, &arguments, password.as_deref())
-                        .await;
+                let result = watch_target_once(
+                    &mut target,
+                    &tool,
+                    &candidates,
+                    &arguments,
+                    password.as_deref(),
+                )
+                .await;
                 Ok::<_, io::Error>((target, result))
             });
         }
@@ -261,10 +267,25 @@ async fn watch_async(
 
 async fn watch_target_once(
     target: &mut WatchTarget,
+    tool: &std::ffi::OsStr,
     candidates: &[ToolCandidate],
     arguments: &[OsString],
     password: Option<&str>,
 ) -> io::Result<(Platform, bool, WatchSnapshot)> {
+    if binport::host::find(&target.host)?
+        .is_some_and(|entry| entry.strategy.as_deref() == Some("exec-hop"))
+    {
+        let outcome = remote_async(&target.host, tool, arguments, password).await?;
+        return Ok((
+            outcome.platform,
+            outcome.cache_hit,
+            WatchSnapshot {
+                status: outcome.status,
+                stdout: outcome.stdout,
+                stderr: outcome.stderr,
+            },
+        ));
+    }
     // Reconnect for bastion hosts on every iteration since they only support
     // one exec channel per connection, and run_remote will use multiple channels.
     if target.ssh.is_none() || target.ssh.as_ref().is_some_and(|s| s.is_bastion()) {

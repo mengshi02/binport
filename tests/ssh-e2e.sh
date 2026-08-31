@@ -236,6 +236,10 @@ hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop command output was not returned"
+hop_watch_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" watch \
+  --interval 1 --count 1 e2e-hop rg 'authentication timeout' /var/log/auth.log)
+printf '%s' "$hop_watch_output" | grep -q 'INITIAL' || \
+  fail "exec-hop watch did not return an initial snapshot"
 
 set +e
 if [ "$(uname -s)" = Linux ]; then
