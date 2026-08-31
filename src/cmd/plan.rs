@@ -71,7 +71,7 @@ pub fn run(args: PlanArgs, json: bool) -> io::Result<u8> {
             .map_err(io::Error::other)?
         );
     } else {
-        println!("HOST\tDESTINATION\tROUTE");
+        let mut host_rows = Vec::new();
         for (host, destination) in destinations {
             let route = if let Some(jump) = &destination.proxy_jump {
                 format!("jump:{jump}")
@@ -80,20 +80,31 @@ pub fn run(args: PlanArgs, json: bool) -> io::Result<u8> {
             } else {
                 "direct".to_owned()
             };
-            println!(
-                "{host}\t{}@{}:{}\t{route}",
-                destination.user, destination.hostname, destination.port,
-            );
+            host_rows.push(vec![
+                host.to_owned(),
+                format!(
+                    "{}@{}:{}",
+                    destination.user, destination.hostname, destination.port
+                ),
+                route,
+            ]);
         }
-        println!("\nARTIFACT\tSIZE\tREMOTE CACHE PATH");
+        print!(
+            "{}",
+            super::table::render(&["HOST", "DESTINATION", "ROUTE"], &host_rows)
+        );
+        let mut artifact_rows = Vec::new();
         for candidate in candidates {
-            println!(
-                "{}\t{}\t{}",
-                candidate.platform.name(),
+            artifact_rows.push(vec![
+                candidate.platform.name().into(),
                 human_bytes(fs::metadata(&candidate.local_path)?.len()),
-                candidate.remote_file
-            );
+                candidate.remote_file,
+            ]);
         }
+        print!(
+            "\n{}",
+            super::table::render(&["ARTIFACT", "SIZE", "REMOTE CACHE PATH"], &artifact_rows)
+        );
         println!("\nPlan only · no network connections made");
     }
     Ok(0)

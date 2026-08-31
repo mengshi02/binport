@@ -191,6 +191,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "unicode-width",
 ]
 
 [[package]]

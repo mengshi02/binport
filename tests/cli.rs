@@ -18,7 +18,7 @@ fn lists_a_binfile_with_the_short_top_level_command() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "TOOL\tREPLACES\tDESCRIPTION\tVERSION\tPLATFORMS\nrg\tgrep\trecursive text search\t15.2.0\tlinux/amd64\n"
+        "TOOL  REPLACES  DESCRIPTION            VERSION  PLATFORMS\nrg    grep      recursive text search  15.2.0   linux/amd64\n"
     );
 }
 
@@ -197,8 +197,12 @@ fn manages_a_host_and_proxy_jump_in_an_isolated_home() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("jump\troot@203.0.113.10:22\tdirect"));
-    assert!(stdout.contains("app-01\troot@10.0.0.52:22\tjump"));
+    assert!(stdout.lines().any(|line| {
+        line.split_whitespace().collect::<Vec<_>>() == ["jump", "root@203.0.113.10:22", "direct"]
+    }));
+    assert!(stdout.lines().any(|line| {
+        line.split_whitespace().collect::<Vec<_>>() == ["app-01", "root@10.0.0.52:22", "jump:jump"]
+    }));
 }
 
 #[test]

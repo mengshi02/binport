@@ -60,36 +60,18 @@ fn list_presets(json: bool) -> io::Result<u8> {
 }
 
 fn render_presets_table(presets: &[binport::bastion::Preset]) -> String {
-    const HEADERS: [&str; 4] = ["PRESET", "FORMAT", "PRODUCT", "STATUS"];
-    let name_width = presets
+    let rows = presets
         .iter()
-        .map(|preset| preset.name.chars().count())
-        .chain([HEADERS[0].len()])
-        .max()
-        .unwrap_or(HEADERS[0].len());
-    let format_width = presets
-        .iter()
-        .map(|preset| preset.format.chars().count())
-        .chain([HEADERS[1].len()])
-        .max()
-        .unwrap_or(HEADERS[1].len());
-    let product_width = presets
-        .iter()
-        .map(|preset| preset.product.chars().count())
-        .chain([HEADERS[2].len()])
-        .max()
-        .unwrap_or(HEADERS[2].len());
-    let mut output = format!(
-        "{:<name_width$}  {:<format_width$}  {:<product_width$}  {}\n",
-        HEADERS[0], HEADERS[1], HEADERS[2], HEADERS[3]
-    );
-    for preset in presets {
-        output.push_str(&format!(
-            "{:<name_width$}  {:<format_width$}  {:<product_width$}  {}\n",
-            preset.name, preset.format, preset.product, preset.status
-        ));
-    }
-    output
+        .map(|preset| {
+            vec![
+                preset.name.into(),
+                preset.format.into(),
+                preset.product.into(),
+                preset.status.into(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    super::table::render(&["PRESET", "FORMAT", "PRODUCT", "STATUS"], &rows)
 }
 
 fn probe(args: BastionProbeArgs, use_password: bool, json: bool) -> io::Result<u8> {
