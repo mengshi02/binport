@@ -6,6 +6,24 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-31
+
+### Added
+
+- Recursively expand managed exec-hop routes up to four remote hops, with
+  explicit cycle and depth protection.
+- Deploy the native Rust helper from one intermediary host to the next without
+  invoking an external `ssh` process.
+- Relay TCP from the final node over an exec stdio channel, so tunnels work
+  even when its SSH server disables `direct-tcpip`.
+- Build the Linux amd64 helper as a static musl binary for old-glibc systems.
+- Cover three isolated SSH servers, recursive commands, toolbox execution,
+  file round trips, and recursive HTTP tunnels in CI.
+
+### Changed
+
+- Show expanded recursive exec-hop paths in host listings.
+
 ## [0.3.0] - 2026-08-31
 
 ### Added
@@ -209,7 +227,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mengshi02/binport/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mengshi02/binport/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/mengshi02/binport/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/mengshi02/binport/compare/v0.2.2...v0.2.3
