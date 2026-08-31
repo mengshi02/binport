@@ -1,6 +1,6 @@
 [package]
 name = "binport"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2024"
 description = "Agentless remote toolbox for SSH hosts, jump servers, and enterprise bastions"
 license = "MIT"
