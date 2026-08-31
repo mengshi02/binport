@@ -290,6 +290,8 @@ binport plan HOST|@GROUP TOOL      离线预览主机、路由和工具选择
 binport watch HOST TOOL            持续观察命令结果变化
 binport cp 源 目标                  通过内置 SSH 复制文件（远端写作 HOST:PATH）
 binport rm HOST:PATH               删除远程文件（目录需要 `-r`）
+binport exec HOST -- CMD [ARGS]... 执行远端已经安装的命令
+binport run HOST SCRIPT [ARGS]...  流式执行本地 Shell 脚本
 binport HOST TOOL [ARGS]...        在单台远程主机执行工具
 binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
 ```
@@ -301,6 +303,18 @@ binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
 binport ls
 binport server-a eza /export
 ```
+
+也可以执行远端已有命令，或者直接通过 SSH stdin 传输并执行本地脚本，无需先
+复制到远端磁盘：
+
+```sh
+binport exec server-a -- systemctl status nginx
+binport run server-a ./diagnose.sh --verbose
+cat diagnose.sh | binport run server-a - --verbose
+```
+
+两者均遵循 direct、ProxyJump、exec-hop 和已配置堡垒机路由。`exec` 支持管道
+stdin 与 `--tty`；`run` 默认使用 `sh -s`，可通过 `--interpreter bash` 切换。
 
 可以用内置的 `micro` 编辑远程文件（自动分配 PTY），也可以直接通过 Rust
 SSH 通道复制普通文件，全程不启动外部 `ssh`/`scp` 进程：
