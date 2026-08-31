@@ -20,14 +20,22 @@ fn main() -> ExitCode {
 
 fn run() -> io::Result<u32> {
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
-    let relay = std::env::args_os()
-        .nth(1)
-        .is_some_and(|arg| arg == "--relay");
+    let mut arguments = std::env::args_os().skip(1);
+    let mode = arguments.next();
     runtime.block_on(async move {
-        if relay {
-            run_relay().await
-        } else {
-            run_exec().await
+        match mode.as_deref() {
+            Some(value) if value == "--relay" => run_relay().await,
+            Some(value) if value == "--connect" => {
+                let remote = arguments.next().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "--connect requires HOST:PORT")
+                })?;
+                run_connect(remote.to_string_lossy().into_owned()).await
+            }
+            Some(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unsupported binport-hop mode",
+            )),
+            None => run_exec().await,
         }
     })
 }
@@ -295,12 +303,22 @@ async fn run_relay() -> io::Result<u32> {
         return relay_process(ssh, command, header, stdin).await;
     }
     let remote = format!("{}:{}", request.remote_host, request.remote_port);
-    let channel = ssh
-        .client()
-        .open_direct_tcpip_channel(remote.as_str(), None)
+    let helper = install_self(&ssh).await?;
+    let command = binport::execute_command(
+        &helper,
+        &[OsString::from("--connect"), OsString::from(remote)],
+    )?;
+    relay_process(ssh, command, Vec::new(), stdin).await
+}
+
+async fn run_connect(remote: String) -> io::Result<u32> {
+    let stream = tokio::net::TcpStream::connect(&remote)
         .await
-        .map_err(io::Error::other)?;
-    let (mut remote_read, mut remote_write) = tokio::io::split(channel.into_stream());
+        .map_err(|error| {
+            io::Error::new(error.kind(), format!("cannot connect to {remote}: {error}"))
+        })?;
+    let (mut remote_read, mut remote_write) = stream.into_split();
+    let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let upstream = async {
         tokio::io::copy(&mut stdin, &mut remote_write).await?;
