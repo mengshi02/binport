@@ -197,7 +197,9 @@ async fn relay_process(
     let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
     let (stdin_tx, stdin_rx) = mpsc::channel(8);
     let feeder = tokio::spawn(async move {
-        stdin_tx.send(header).await.map_err(io::Error::other)?;
+        if !header.is_empty() {
+            stdin_tx.send(header).await.map_err(io::Error::other)?;
+        }
         let mut buffer = vec![0_u8; 64 * 1024];
         loop {
             let read = stdin.read(&mut buffer).await?;
