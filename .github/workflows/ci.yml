@@ -43,6 +43,14 @@ jobs:
           sudo apt-get install --no-install-recommends --yes openssh-server
           sudo mkdir -p /run/sshd
           sh tests/ssh-e2e.sh
+      - name: Upload Linux validation binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: binport-linux-validation
+          path: |
+            target/release/binport
+            target/release/binport-hop
+          if-no-files-found: error
 
   windows:
     name: Windows compile and test

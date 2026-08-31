@@ -186,15 +186,27 @@ impl NativeSsh {
         password: Option<&str>,
         jump: &SharedJump,
     ) -> io::Result<Self> {
-        let client = Client::connect_via(
-            &jump.client,
-            (destination.hostname.as_str(), destination.port),
-            &destination.user,
-            auth_method(destination, password)?,
-            ServerCheckMethod::DefaultKnownHostsFile,
-        )
-        .await
-        .map_err(io::Error::other)?;
+        let mut last_error = None;
+        let mut client = None;
+        for auth in auth_methods(destination, password)? {
+            match Client::connect_via(
+                &jump.client,
+                (destination.hostname.as_str(), destination.port),
+                &destination.user,
+                auth,
+                ServerCheckMethod::DefaultKnownHostsFile,
+            )
+            .await
+            {
+                Ok(connected) => {
+                    client = Some(connected);
+                    break;
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        let client =
+            client.ok_or_else(|| io::Error::other(last_error.expect("auth candidates")))?;
         Ok(Self {
             client,
             _jump: Some(jump.client.clone()),
@@ -698,14 +710,21 @@ impl Drop for RawModeGuard {
 }
 
 async fn connect_direct(destination: &Destination, password: Option<&str>) -> io::Result<Client> {
-    Client::connect(
-        (destination.hostname.as_str(), destination.port),
-        &destination.user,
-        auth_method(destination, password)?,
-        ServerCheckMethod::DefaultKnownHostsFile,
-    )
-    .await
-    .map_err(io::Error::other)
+    let mut last_error = None;
+    for auth in auth_methods(destination, password)? {
+        match Client::connect(
+            (destination.hostname.as_str(), destination.port),
+            &destination.user,
+            auth,
+            ServerCheckMethod::DefaultKnownHostsFile,
+        )
+        .await
+        {
+            Ok(client) => return Ok(client),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(io::Error::other(last_error.expect("auth candidates")))
 }
 
 fn bastion_password_for_host(host: &str) -> Option<String> {
@@ -797,6 +816,39 @@ fn auth_method(destination: &Destination, password: Option<&str>) -> io::Result<
         .map(|path| AuthMethod::with_key_file(path, None))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no private key found"))?;
     Ok(auth)
+}
+
+fn auth_methods(destination: &Destination, password: Option<&str>) -> io::Result<Vec<AuthMethod>> {
+    if password.is_some() {
+        return Ok(vec![auth_method(destination, password)?]);
+    }
+    let mut paths = Vec::new();
+    if let Some(identity) = &destination.identity {
+        paths.push(identity.clone());
+    }
+    if let Some(home) = user_home() {
+        let ssh_dir = home.join(".ssh");
+        for name in ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"] {
+            let path = ssh_dir.join(name);
+            if path.is_file() && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    let mut methods = paths
+        .into_iter()
+        .map(|path| AuthMethod::with_key_file(path, None))
+        .collect::<Vec<_>>();
+    if let Some(agent) = agent_auth_method() {
+        methods.push(agent);
+    }
+    if methods.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no SSH agent or private key found",
+        ));
+    }
+    Ok(methods)
 }
 
 fn apply_ssh_config(source: &str, alias: &str, allow_user: bool, destination: &mut Destination) {
