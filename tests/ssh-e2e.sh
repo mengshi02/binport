@@ -8,8 +8,10 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/binport-ssh-e2e.XXXXXX")
 entry_port=$((32000 + ($$ % 19000)))
 target_port=$((entry_port + 1))
+deep_port=$((entry_port + 2))
 entry_sshd_pid=
 target_sshd_pid=
+deep_sshd_pid=
 http_pid=
 release_http_pid=
 tunnel_pid=
@@ -22,7 +24,7 @@ if [ -z "$sshd_bin" ] && [ -x /usr/sbin/sshd ]; then
 fi
 
 cleanup() {
-  for pid in "$entry_sshd_pid" "$target_sshd_pid"; do
+  for pid in "$entry_sshd_pid" "$target_sshd_pid" "$deep_sshd_pid"; do
     if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
   done
   if [ -n "$tunnel_pid" ]; then
@@ -56,17 +58,23 @@ mkdir -p \
   "$test_root/entry/bin" \
   "$test_root/target/.ssh" \
   "$test_root/target/bin" \
+  "$test_root/deep/.ssh" \
+  "$test_root/deep/bin" \
   "$test_root/project"
 ssh-keygen -q -t ed25519 -N '' -f "$test_root/entry_host_key"
 ssh-keygen -q -t ed25519 -N '' -f "$test_root/target_host_key"
 ssh-keygen -q -t ed25519 -N '' -f "$test_root/client_key"
 ssh-keygen -q -t ed25519 -N '' -f "$test_root/target_key"
+ssh-keygen -q -t ed25519 -N '' -f "$test_root/deep_key"
 ssh-keygen -q -t ed25519 -N '' -f "$test_root/rejected_target_key"
 cp "$test_root/client_key.pub" "$test_root/entry_authorized_keys"
 cp "$test_root/target_key.pub" "$test_root/target_authorized_keys"
+cp "$test_root/deep_key.pub" "$test_root/deep_authorized_keys"
 cp "$test_root/rejected_target_key" "$test_root/entry/.ssh/id_ed25519"
 cp "$test_root/target_key" "$test_root/entry/.ssh/id_rsa"
 chmod 600 "$test_root/entry/.ssh/id_ed25519" "$test_root/entry/.ssh/id_rsa"
+cp "$test_root/deep_key" "$test_root/target/.ssh/id_rsa"
+chmod 600 "$test_root/target/.ssh/id_rsa"
 
 "$rustc_bin" -C opt-level=1 "$project_root/tests/fixtures/ssh-e2e/rg.rs" \
   -o "$test_root/project/rg"
@@ -84,6 +92,7 @@ printf '%s\n' \
   'fi' >"$test_root/target/bin/uname"
 chmod +x "$test_root/target/bin/uname"
 cp "$test_root/target/bin/uname" "$test_root/entry/bin/uname"
+cp "$test_root/target/bin/uname" "$test_root/deep/bin/uname"
 
 printf '%s\n' \
   '#!/bin/sh' \
@@ -92,6 +101,13 @@ printf '%s\n' \
   "export BINPORT_E2E_LOG='$project_root/tests/fixtures/ssh-e2e/auth.log'" \
   'exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"' >"$test_root/target-force-command"
 chmod +x "$test_root/target-force-command"
+printf '%s\n' \
+  '#!/bin/sh' \
+  "export HOME='$test_root/deep'" \
+  "export PATH='$test_root/deep/bin:/usr/bin:/bin'" \
+  "export BINPORT_E2E_LOG='$project_root/tests/fixtures/ssh-e2e/auth.log'" \
+  'exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"' >"$test_root/deep-force-command"
+chmod +x "$test_root/deep-force-command"
 printf '%s\n' \
   '#!/bin/sh' \
   "export HOME='$test_root/entry'" \
@@ -127,11 +143,26 @@ printf '%s\n' \
   'StrictModes no' \
   "ForceCommand $test_root/target-force-command" \
   'LogLevel ERROR' >"$test_root/target-sshd_config"
+printf '%s\n' \
+  "Port $deep_port" \
+  'ListenAddress 127.0.0.1' \
+  "HostKey $test_root/target_host_key" \
+  "PidFile $test_root/deep-sshd.pid" \
+  "AuthorizedKeysFile $test_root/deep_authorized_keys" \
+  'PasswordAuthentication no' \
+  'KbdInteractiveAuthentication no' \
+  'PubkeyAuthentication yes' \
+  'UsePAM no' \
+  'StrictModes no' \
+  "ForceCommand $test_root/deep-force-command" \
+  'LogLevel ERROR' >"$test_root/deep-sshd_config"
 
 awk -v port="$entry_port" '{ print "[127.0.0.1]:" port " " $1 " " $2 }' \
   "$test_root/entry_host_key.pub" >"$test_root/client/.ssh/known_hosts"
 awk -v port="$target_port" '{ print "[127.0.0.1]:" port " " $1 " " $2 }' \
   "$test_root/target_host_key.pub" >"$test_root/entry/.ssh/known_hosts"
+awk -v port="$deep_port" '{ print "[127.0.0.1]:" port " " $1 " " $2 }' \
+  "$test_root/target_host_key.pub" >"$test_root/target/.ssh/known_hosts"
 printf '%s\n' \
   'Host e2e-node' \
   '    HostName 127.0.0.1' \
@@ -145,6 +176,8 @@ printf '%s\n' \
 entry_sshd_pid=$!
 "$sshd_bin" -D -f "$test_root/target-sshd_config" -E "$test_root/target-sshd.log" &
 target_sshd_pid=$!
+"$sshd_bin" -D -f "$test_root/deep-sshd_config" -E "$test_root/deep-sshd.log" &
+deep_sshd_pid=$!
 
 attempt=0
 while ! HOME="$test_root/client" ssh -F "$test_root/client/.ssh/config" \
@@ -215,7 +248,7 @@ printf '%s' "$guided_output" | grep -q 'Strategy: exec-hop' || \
   fail "guided setup did not select exec-hop"
 grep -q 'BinportStrategy exec-hop' "$test_root/client/.ssh/binport_config" || \
   fail "guided setup did not persist exec-hop"
-release_port=$((target_port + 3))
+release_port=$((deep_port + 1))
 package=binport-linux-amd64
 mkdir -p "$test_root/release/$package"
 cp "$binport_hop_bin" "$test_root/release/$package/binport-hop"
@@ -241,6 +274,23 @@ hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop command output was not returned"
+HOME="$test_root/client" "$binport_bin" host add e2e-deep "$(id -un)@127.0.0.1" \
+  --port "$deep_port" --jump e2e-hop --exec-hop >/dev/null
+deep_exec_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" \
+  exec e2e-deep -- uname -s)
+[ "$deep_exec_output" = Linux ] || fail "recursive exec-hop command output was not returned"
+deep_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-deep rg \
+  'authentication timeout' /var/log/auth.log)
+printf '%s' "$deep_output" | grep -q 'authentication timeout upstream=identity' || \
+  fail "recursive exec-hop toolbox output was not returned"
+printf '%s\n' 'round-trip over recursive exec-hop' >"$test_root/deep-local.txt"
+deep_remote="$test_root/deep/deep-copied.txt"
+env HOME="$test_root/client" "$hop_env" "$binport_bin" cp \
+  "$test_root/deep-local.txt" "e2e-deep:$deep_remote" >/dev/null
+env HOME="$test_root/client" "$hop_env" "$binport_bin" cp \
+  "e2e-deep:$deep_remote" "$test_root/deep-downloaded.txt" >/dev/null
+cmp "$test_root/deep-local.txt" "$test_root/deep-downloaded.txt"
+env HOME="$test_root/client" "$hop_env" "$binport_bin" rm "e2e-deep:$deep_remote" >/dev/null
 hop_exec_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" exec e2e-hop -- uname -s)
 [ "$hop_exec_output" = Linux ] || fail "exec-hop native command output was not returned"
 hop_run_output=$(printf 'printf "run:%%s\\n" "$1"\n' | \
@@ -279,8 +329,8 @@ env HOME="$test_root/client" "$hop_env" "$binport_bin" rm \
   "e2e-hop:$hop_remote" >/dev/null
 test ! -e "$hop_remote" || fail "exec-hop remote file was not removed"
 
-http_port=$((target_port + 1))
-local_tunnel_port=$((target_port + 2))
+http_port=$((deep_port + 2))
+local_tunnel_port=$((deep_port + 3))
 python3 -m http.server "$http_port" --bind 127.0.0.1 \
   --directory "$test_root/target" >"$test_root/http.log" 2>&1 &
 http_pid=$!
@@ -300,6 +350,26 @@ while ! curl --fail --silent --max-time 1 "http://127.0.0.1:$local_tunnel_port/"
 done
 grep -q 'Directory listing' "$test_root/tunnel-response.html" || \
   fail "exec-hop TCP relay returned an unexpected response"
+kill "$tunnel_pid" 2>/dev/null || true
+wait "$tunnel_pid" 2>/dev/null || true
+tunnel_pid=
+deep_tunnel_port=$((deep_port + 4))
+env HOME="$test_root/client" "$hop_env" "$binport_bin" tunnel \
+  "$deep_tunnel_port:127.0.0.1:$http_port" e2e-deep \
+  >"$test_root/deep-tunnel.log" 2>&1 &
+tunnel_pid=$!
+attempt=0
+while ! curl --fail --silent --max-time 1 "http://127.0.0.1:$deep_tunnel_port/" \
+  >"$test_root/deep-tunnel-response.html"; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 40 ]; then
+    sed -n '1,160p' "$test_root/deep-tunnel.log" >&2
+    fail "recursive exec-hop TCP relay did not become ready"
+  fi
+  sleep 0.1
+done
+grep -q 'Directory listing' "$test_root/deep-tunnel-response.html" || \
+  fail "recursive exec-hop TCP relay returned an unexpected response"
 
 # An entry authentication failure must identify the entry, not the target alias.
 mv "$test_root/client_key" "$test_root/client_key.disabled"

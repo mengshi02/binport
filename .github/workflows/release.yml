@@ -21,7 +21,7 @@ jobs:
         include:
           - name: linux-amd64
             runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             archive: tar.gz
           - name: linux-arm64
             runner: ubuntu-latest
@@ -47,6 +47,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes gcc-aarch64-linux-gnu
+      - name: Install Linux amd64 musl linker
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
       - name: Install Rust target
         run: |
           rustup toolchain install stable --profile minimal

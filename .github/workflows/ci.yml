@@ -34,13 +34,18 @@ jobs:
           [scriptblock]::Create((Get-Content install.ps1 -Raw)) | Out-Null
       - name: Build release binary
         run: cargo build --release --locked
+      - name: Build portable Linux helper
+        run: |
+          sudo apt-get install --no-install-recommends --yes musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --locked --target x86_64-unknown-linux-musl --bin binport-hop
       - name: Upload Linux validation binaries
         uses: actions/upload-artifact@v7
         with:
           name: binport-linux-validation
           path: |
             target/release/binport
-            target/release/binport-hop
+            target/x86_64-unknown-linux-musl/release/binport-hop
           if-no-files-found: error
       - name: Run native SSH end-to-end test
         env:

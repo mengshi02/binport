@@ -376,15 +376,7 @@ async fn connect_exec_hop(
     if entry.strategy.as_deref() != Some("exec-hop") {
         return Ok(None);
     }
-    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "exec-hop host has no entry host",
-        )
-    })?;
-    let jump = Destination::resolve(jump_alias)?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
-    ExecHop::connect(&jump, target, entry.port, password, show_progress)
+    ExecHop::connect_host(&entry, password, show_progress)
         .await
         .map(Some)
 }

@@ -212,15 +212,7 @@ async fn remote_exec_hop_tty_async(
     arguments: &[OsString],
     entry_password: Option<&str>,
 ) -> io::Result<u32> {
-    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "exec-hop host is missing its entry host",
-        )
-    })?;
-    let jump_destination = Destination::resolve(jump_alias)?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
-    let hop = ExecHop::connect(&jump_destination, target, entry.port, entry_password, true).await?;
+    let hop = ExecHop::connect_host(&entry, entry_password, true).await?;
     let candidates = toolbox_candidates(tool)?;
     if candidates.is_empty() {
         return Err(io::Error::new(
@@ -377,15 +369,8 @@ async fn remote_exec_hop_async(
     arguments: &[OsString],
     entry_password: Option<&str>,
 ) -> io::Result<RemoteOutcome> {
-    let jump_alias = entry.proxy_jump.as_deref().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "exec-hop host is missing its entry host",
-        )
-    })?;
-    let jump_destination = Destination::resolve(jump_alias)?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
-    let hop = ExecHop::connect(&jump_destination, target, entry.port, entry_password, true).await?;
+    let jump_alias = entry.proxy_jump.as_deref().unwrap_or("?");
+    let hop = ExecHop::connect_host(&entry, entry_password, true).await?;
     let candidates = toolbox_candidates(tool)?;
     if candidates.is_empty() {
         return Err(io::Error::new(

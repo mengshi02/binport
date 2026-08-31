@@ -801,17 +801,13 @@ fn test_exec_hop(
             "exec-hop host has no entry host",
         )
     })?;
-    let jump = Destination::resolve(jump_alias)?;
     let password = use_password
         .then(|| rpassword::prompt_password("Entry-host SSH password: "))
         .transpose()?;
-    let target = format!("{}@{}", entry.user, entry.hostname);
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let started = std::time::Instant::now();
     let (command_result, stream_result) = runtime.block_on(async {
-        let hop =
-            binport::hop::ExecHop::connect(&jump, target, entry.port, password.as_deref(), !json)
-                .await?;
+        let hop = binport::hop::ExecHop::connect_host(entry, password.as_deref(), !json).await?;
         let command = hop
             .execute_capture_with_input(
                 "printf 'BINPORT_HOP_OK\\n'; uname -s; uname -m".to_owned(),
@@ -950,7 +946,26 @@ fn host_json(entry: &binport::host::HostEntry) -> serde_json::Value {
 fn route_label(entry: &binport::host::HostEntry) -> String {
     if let Some(jump) = &entry.proxy_jump {
         return if entry.strategy.as_deref() == Some("exec-hop") {
-            format!("exec-hop:{jump}")
+            let mut chain = vec![jump.clone()];
+            let mut cursor = jump.clone();
+            while chain.len() < 4 {
+                let Ok(Some(parent)) = binport::host::find(&cursor) else {
+                    break;
+                };
+                if parent.strategy.as_deref() != Some("exec-hop") {
+                    break;
+                }
+                let Some(next) = parent.proxy_jump else {
+                    break;
+                };
+                if chain.contains(&next) {
+                    break;
+                }
+                cursor = next.clone();
+                chain.push(next);
+            }
+            chain.reverse();
+            format!("exec-hop:{}", chain.join(" -> "))
         } else {
             format!("jump:{jump}")
         };
