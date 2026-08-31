@@ -213,11 +213,23 @@ fn authentication_hint(host: &str, error: io::Error) -> io::Error {
     let lower = message.to_ascii_lowercase();
     if lower.contains("authentication")
         || lower.contains("no ssh agent or private key")
+        || lower.contains("ssh agent has no identities")
         || lower.contains("unable to load key")
     {
-        let auth_host = binport::host::find(host)
-            .ok()
-            .flatten()
+        let managed = binport::host::find(host).ok().flatten();
+        if lower.contains("binport-hop:")
+            && managed
+                .as_ref()
+                .is_some_and(|entry| entry.strategy.as_deref() == Some("exec-hop"))
+        {
+            return io::Error::new(
+                error.kind(),
+                format!(
+                    "{message}; target authentication failed inside the entry host; verify that non-interactive SSH from the entry host to {host:?} works"
+                ),
+            );
+        }
+        let auth_host = managed
             .filter(|entry| entry.strategy.as_deref() == Some("exec-hop"))
             .and_then(|entry| entry.proxy_jump)
             .unwrap_or_else(|| host.to_owned());
