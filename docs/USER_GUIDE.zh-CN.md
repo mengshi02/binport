@@ -53,7 +53,7 @@ binport --version
 目录：
 
 ```sh
-BINPORT_VERSION=v0.2.4 \
+BINPORT_VERSION=v0.3.0 \
 BINPORT_INSTALL_DIR="$HOME/bin" \
 sh install.sh
 ```
@@ -71,7 +71,7 @@ binport --version
 ### 从源码安装
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.2.4 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.3.0 --locked
 ```
 
 ## 4. 新机器首次配置
@@ -314,6 +314,19 @@ binport --tty server-a micro /etc/myapp/config.toml
 
 `eza` 默认启用长格式和 ANSI 色彩，用户显式参数优先。`btm`、`micro`、
 `edit` 等交互工具会自动使用 PTY；其他工具可用 `--tty` 强制分配。
+
+执行远端已有命令或流式执行本地脚本：
+
+```sh
+binport exec server-a -- uname -a
+binport --tty exec server-a -- top
+binport run server-a ./diagnose.sh --verbose
+cat diagnose.sh | binport run server-a - --verbose
+```
+
+`run` 不需要预先上传脚本文件，默认通过 `sh -s` 从 stdin 执行；可使用
+`--interpreter bash`。两种命令均支持 direct、ProxyJump、exec-hop 和已配置的
+企业堡垒机路由，并原样返回退出码、stdout 与 stderr。
 
 全局选项：
 

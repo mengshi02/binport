@@ -69,7 +69,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.2.4" \
+BINPORT_VERSION="v0.3.0" \
 sh install.sh
 ```
 
@@ -316,6 +316,8 @@ binport plan HOST|@GROUP TOOL     Preview hosts, routes, and artifacts offline
 binport watch [OPTIONS] HOST TOOL Repeatedly report command-result changes
 binport cp SOURCE DESTINATION      Copy a file over native SSH (HOST:PATH)
 binport rm HOST:PATH               Remove a remote file (`-r` for directories)
+binport exec HOST -- CMD [ARGS]... Execute a command already on the remote host
+binport run HOST SCRIPT [ARGS]...  Stream and execute a local shell script
 binport HOST TOOL [ARGUMENTS]...  Execute a tool remotely
 binport @GROUP TOOL [ARGUMENTS]... Execute concurrently across a fleet
 ```
@@ -328,6 +330,19 @@ explicit `eza` layout/color flags still take precedence:
 binport ls
 binport server-a eza /export
 ```
+
+Run commands that are already installed remotely, or stream a local script
+through SSH without first copying it to disk:
+
+```sh
+binport exec server-a -- systemctl status nginx
+binport run server-a ./diagnose.sh --verbose
+cat diagnose.sh | binport run server-a - --verbose
+```
+
+Both commands follow direct, ProxyJump, exec-hop, and configured bastion routes.
+`exec` accepts piped stdin and `--tty`; `run` uses `sh -s` by default and can
+select another interpreter with `--interpreter bash`.
 
 Edit a remote file with the bundled `micro` editor (PTY is automatic), or copy
 regular files without invoking external `ssh`/`scp` processes:

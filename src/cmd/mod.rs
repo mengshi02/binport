@@ -3,6 +3,7 @@ pub mod bastion;
 pub mod fleet;
 pub mod host;
 pub mod lifecycle;
+pub mod native_exec;
 pub mod plan;
 pub mod registry;
 pub mod remote;

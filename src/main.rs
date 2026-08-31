@@ -6,6 +6,7 @@ use cmd::bastion::BastionArgs;
 use cmd::fleet::DoctorArgs;
 use cmd::host::HostArgs;
 use cmd::lifecycle::{BuildArgs, FetchArgs, ProjectArgs, TransferArgs};
+use cmd::native_exec::{ExecArgs, RunArgs};
 use cmd::plan::PlanArgs;
 use cmd::registry::{PullArgs, PushArgs};
 use cmd::transfer::{CpArgs, RmArgs};
@@ -93,6 +94,10 @@ enum CommandKind {
     Watch(WatchArgs),
     /// Forward local ports to remote services through SSH
     Tunnel(TunnelArgs),
+    /// Execute a command already installed on a remote host
+    Exec(ExecArgs),
+    /// Stream a local script to a remote host and execute it
+    Run(RunArgs),
     /// Execute a toolbox tool on an SSH host
     #[command(external_subcommand)]
     Remote(Vec<OsString>),
@@ -139,6 +144,8 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Plan(args) => cmd::plan::run(args, json),
         CommandKind::Watch(args) => cmd::watch::run(args, use_password, concurrency, json),
         CommandKind::Tunnel(args) => cmd::tunnel::run(args, use_password),
+        CommandKind::Exec(args) => cmd::native_exec::exec(args, use_password, tty, json),
+        CommandKind::Run(args) => cmd::native_exec::run(args, use_password, json),
         CommandKind::Remote(args) => {
             cmd::remote::run(args, use_password, verbose, concurrency, json, tty)
         }

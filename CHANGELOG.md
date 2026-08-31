@@ -6,6 +6,19 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-31
+
+### Added
+
+- Execute commands already installed on remote hosts with
+  `binport exec HOST -- COMMAND [ARGUMENTS]...`.
+- Stream local or stdin shell scripts directly to remote interpreters with
+  `binport run HOST SCRIPT [ARGUMENTS]...`, without creating a remote file.
+- Support direct, ProxyJump, exec-hop, and configured bastion routes, including
+  stdin, stdout, stderr, exit codes, JSON output, and TTY mode for `exec`.
+- Exercise command and script execution over direct and isolated exec-hop SSH
+  routes in the end-to-end suite.
+
 ## [0.2.4] - 2026-08-31
 
 ### Fixed
@@ -196,7 +209,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mengshi02/binport/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/mengshi02/binport/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/mengshi02/binport/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/mengshi02/binport/compare/v0.2.1...v0.2.2

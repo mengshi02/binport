@@ -176,6 +176,11 @@ first_run=$(HOME="$test_root/client" "$binport_bin" e2e-node rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$first_run" | grep -q 'authentication timeout upstream=identity' || \
   fail "remote command output was not returned"
+exec_output=$(HOME="$test_root/client" "$binport_bin" exec e2e-node -- uname -s)
+[ "$exec_output" = Linux ] || fail "native remote exec output was not returned"
+run_output=$(printf 'printf "run:%%s\\n" "$1"\n' | \
+  HOME="$test_root/client" "$binport_bin" run e2e-node - direct)
+[ "$run_output" = run:direct ] || fail "streamed remote script output was not returned"
 
 second_run=$(HOME="$test_root/client" "$binport_bin" --verbose e2e-node rg \
   'authentication timeout' /var/log/auth.log 2>&1)
@@ -236,6 +241,11 @@ hop_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" e2e-hop rg \
   'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop command output was not returned"
+hop_exec_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" exec e2e-hop -- uname -s)
+[ "$hop_exec_output" = Linux ] || fail "exec-hop native command output was not returned"
+hop_run_output=$(printf 'printf "run:%%s\\n" "$1"\n' | \
+  env HOME="$test_root/client" "$hop_env" "$binport_bin" run e2e-hop - hop)
+[ "$hop_run_output" = run:hop ] || fail "exec-hop streamed script output was not returned"
 hop_watch_output=$(env HOME="$test_root/client" "$hop_env" "$binport_bin" watch \
   --interval 1 --count 1 e2e-hop rg 'authentication timeout' /var/log/auth.log)
 printf '%s' "$hop_watch_output" | grep -q 'INITIAL' || \
