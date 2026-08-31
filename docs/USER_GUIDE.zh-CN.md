@@ -53,7 +53,7 @@ binport --version
 目录：
 
 ```sh
-BINPORT_VERSION=v0.2.2 \
+BINPORT_VERSION=v0.2.3 \
 BINPORT_INSTALL_DIR="$HOME/bin" \
 sh install.sh
 ```
@@ -71,7 +71,7 @@ binport --version
 ### 从源码安装
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.2.2 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.2.3 --locked
 ```
 
 ## 4. 新机器首次配置
