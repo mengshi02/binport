@@ -72,7 +72,8 @@ chmod 600 "$test_root/entry/.ssh/id_ed25519" "$test_root/entry/.ssh/id_rsa"
   -o "$test_root/project/rg"
 printf '%s\n' \
   'TARGET linux/amd64' \
-  'COPY ./rg rg --target linux/amd64' >"$test_root/project/Binfile"
+  'COPY ./rg rg --target linux/amd64' \
+  'COPY ./rg btm --target linux/amd64' >"$test_root/project/Binfile"
 
 # Keep platform detection deterministic on both amd64 and arm64 CI runners.
 printf '%s\n' \
@@ -237,12 +238,12 @@ printf '%s' "$hop_output" | grep -q 'authentication timeout upstream=identity' |
   fail "exec-hop command output was not returned"
 
 if [ "$(uname -s)" = Linux ]; then
-  tty_output=$(timeout 20s script -q -e -c \
-    "env HOME='$test_root/client' '$hop_env' '$binport_bin' --tty e2e-hop rg 'authentication timeout' /var/log/auth.log" \
-    /dev/null </dev/null)
+  tty_output=$(printf q | timeout 20s script -q -e -c \
+    "env HOME='$test_root/client' '$hop_env' '$binport_bin' e2e-hop btm 'authentication timeout' /var/log/auth.log" \
+    /dev/null)
 else
-  tty_output=$(script -q /dev/null env HOME="$test_root/client" "$hop_env" \
-    "$binport_bin" --tty e2e-hop rg 'authentication timeout' /var/log/auth.log)
+  tty_output=$(printf q | script -q /dev/null env HOME="$test_root/client" "$hop_env" \
+    "$binport_bin" e2e-hop btm 'authentication timeout' /var/log/auth.log)
 fi
 printf '%s' "$tty_output" | grep -q 'authentication timeout upstream=identity' || \
   fail "exec-hop TTY command output was not returned"
