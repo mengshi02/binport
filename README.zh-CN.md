@@ -334,6 +334,15 @@ GPU/NPU 型号与驱动、CUDA/ROCm/MUSA（摩尔线程）、NUMA、RDMA、共�
 PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全的调优白名单，
 不会扫描凭据。`diff` 默认只展示差异，传入 `--all` 可以同时展示相同字段。
 
+终端中的内存、磁盘、共享内存和加速卡显存统一使用 KiB/MiB/GiB/TiB；JSON
+在 `raw_values` 中保留精确字节数。检测到昇腾环境后还会展示卡数、芯片数、
+产品型号、驱动、固件和 CANN 版本（以当前用户权限可读取的信息为准）。
+
+交互式终端会自动为分区、不可用项和两机差异着色；重定向与 JSON 不包含 ANSI
+控制符，也可通过 `NO_COLOR=1` 显式关闭。探针还覆盖容器/cgroup 限额、透明
+大页、NUMA balancing、PCIe、RDMA 设备名、默认网卡 MTU/速率、CPU 型号、
+可用内存、Swap，以及 NCCL/HCCL/MCCL 通信库。
+
 可以用内置的 `micro` 编辑远程文件（自动分配 PTY），也可以直接通过 Rust
 SSH 通道复制普通文件，全程不启动外部 `ssh`/`scp` 进程：
 

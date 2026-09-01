@@ -6,6 +6,24 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-01
+
+### Added
+
+- Report Ascend card and chip counts, product names, driver and firmware
+  versions, and the installed CANN toolkit version.
+- Highlight environment sections, unavailable values, and two-host differences
+  with terminal-aware color while keeping pipes, `NO_COLOR`, and JSON clean.
+- Inspect CPU model, available memory, swap, filesystem, cgroup CPU/memory
+  limits, transparent HugePages, NUMA balancing, default-network MTU/speed,
+  RDMA device names, PCIe links, and collective-communication libraries.
+
+### Changed
+
+- Render memory, disk, shared-memory, and accelerator-memory capacities as
+  human-readable KiB/MiB/GiB/TiB values while preserving exact bytes in JSON.
+- Omit empty vendor-specific accelerator details from human output.
+
 ## [0.5.0] - 2026-09-01
 
 ### Added

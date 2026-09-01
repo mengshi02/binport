@@ -363,6 +363,17 @@ packages. It reads only a safe allowlist of tuning variables and never scans
 credentials. By default `diff` prints only changed fields; add `--all` to
 include equal values.
 
+Capacity fields use human-readable binary units in terminal output. JSON keeps
+the same display values and adds exact byte counts under `raw_values`. Ascend
+hosts additionally report card/chip counts, product names, driver, firmware,
+and CANN versions when available to the current user.
+
+Interactive terminals color sections and host differences automatically;
+redirected output and JSON never contain ANSI escapes, and `NO_COLOR=1`
+disables color explicitly. The probe also covers container/cgroup limits,
+Transparent HugePages, NUMA balancing, PCIe links, RDMA devices, default-route
+MTU/speed, CPU model, available memory, swap, and NCCL/HCCL/MCCL libraries.
+
 Edit a remote file with the bundled `micro` editor (PTY is automatic), or copy
 regular files without invoking external `ssh`/`scp` processes:
 

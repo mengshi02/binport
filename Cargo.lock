@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "binport"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-ssh2-tokio",
  "clap",
