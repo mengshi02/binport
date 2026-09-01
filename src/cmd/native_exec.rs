@@ -131,6 +131,31 @@ async fn execute_async(
     emit(status, stdout, stderr, json)
 }
 
+pub async fn capture_remote(
+    target: &str,
+    command: String,
+    password: Option<&str>,
+) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
+    if let Some(entry) = binport::host::find(target)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        return ExecHop::connect_host(&entry, password, false)
+            .await?
+            .execute_capture_with_input(command, Vec::new())
+            .await;
+    }
+
+    let destination = Destination::resolve(target)?;
+    let ssh = if let Some(alias) = destination.proxy_jump.as_deref() {
+        let jump = NativeSsh::connect_jump(alias, password).await?;
+        NativeSsh::connect_with_jump(&destination, password, &jump).await?
+    } else {
+        NativeSsh::connect(&destination, password).await?
+    };
+    ssh.execute_capture_with_input_fresh(&command, Vec::new())
+        .await
+}
+
 fn emit(status: u32, stdout: Vec<u8>, stderr: Vec<u8>, json: bool) -> io::Result<u8> {
     if json {
         println!(

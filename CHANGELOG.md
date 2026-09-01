@@ -6,6 +6,26 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-01
+
+### Added
+
+- Capture structured, read-only remote environment snapshots with
+  `binport inspect`, across direct, ProxyJump, bastion, and recursive exec-hop
+  routes.
+- Compare two hosts with `binport diff`, including section filters, equal-field
+  output, aligned human-readable tables, and machine-readable JSON.
+- Inspect system, resource, runtime, network, accelerator, and AI-runtime facts,
+  including NVIDIA CUDA, AMD ROCm, Ascend, Intel XPU, and Moore Threads MUSA.
+- Report GPU models, memory, drivers, NUMA, RDMA, shared memory, HugePages, CPU
+  acceleration features, selected AI package versions, and a safe allowlist of
+  accelerator tuning variables.
+
+### Security
+
+- Never scan arbitrary environment variables while inspecting AI runtimes;
+  collect only an explicit non-secret tuning allowlist.
+
 ## [0.4.0] - 2026-08-31
 
 ### Added

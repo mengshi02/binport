@@ -152,8 +152,8 @@ binport prod-db rg --version
 递归路由只需引用上一层已配置主机：
 
 ```sh
-binport host add 35 root@10.226.3.5 --jump 51 --exec-hop
-binport host add 343 root@10.226.3.43 --jump 35 --exec-hop
+binport host add app root@10.0.0.35 --jump gateway --exec-hop
+binport host add db root@10.0.0.43 --jump app --exec-hop
 binport exec 343 -- uname -a       # 自动展开 51 → 35 → 343
 ```
 
@@ -593,6 +593,8 @@ binport build .
 | `binport doctor TARGET` | 检查连接、平台与缓存 |
 | `binport warm TARGET` | 预热完整工具箱 |
 | `binport watch ...` | 持续观察命令结果变化 |
+| `binport inspect HOST` | 采集远端只读环境快照 |
+| `binport diff A B` | 对比系统、资源、网络、GPU/NPU、CUDA/ROCm/MUSA 与 AI 运行时环境 |
 | `binport export/load FILE` | 单文件离线分发 |
 | `binport pack/unpack FILE` | OCI layout 离线分发 |
 | `binport push/pull oci://...` | Registry/Harbor 分发 |

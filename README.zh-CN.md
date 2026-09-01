@@ -293,6 +293,8 @@ binport cp 源 目标                  通过内置 SSH 复制文件（远端写
 binport rm HOST:PATH               删除远程文件（目录需要 `-r`）
 binport exec HOST -- CMD [ARGS]... 执行远端已经安装的命令
 binport run HOST SCRIPT [ARGS]...  流式执行本地 Shell 脚本
+binport inspect HOST               采集只读环境快照
+binport diff HOST-A HOST-B         对比两台远端主机的环境
 binport HOST TOOL [ARGS]...        在单台远程主机执行工具
 binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
 ```
@@ -316,6 +318,21 @@ cat diagnose.sh | binport run server-a - --verbose
 
 两者均遵循 direct、ProxyJump、exec-hop 和已配置堡垒机路由。`exec` 支持管道
 stdin 与 `--tty`；`run` 默认使用 `sh -s`，可通过 `--interpreter bash` 切换。
+
+当程序在一台机器正常、另一台异常时，可以直接对比两端环境；该能力同样支持
+已配置的跳板机与递归 exec-hop 路由：
+
+```sh
+binport inspect server-a
+binport diff server-a server-b
+binport diff server-a server-b --section system,runtime
+binport --json diff server-a server-b
+```
+
+只读探针覆盖系统、资源、运行时、配置、网络、加速器与 AI 运行时信息，包括
+GPU/NPU 型号与驱动、CUDA/ROCm/MUSA（摩尔线程）、NUMA、RDMA、共享内存、CPU 加速指令集，以及
+PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全的调优白名单，
+不会扫描凭据。`diff` 默认只展示差异，传入 `--all` 可以同时展示相同字段。
 
 可以用内置的 `micro` 编辑远程文件（自动分配 PTY），也可以直接通过 Rust
 SSH 通道复制普通文件，全程不启动外部 `ssh`/`scp` 进程：

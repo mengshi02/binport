@@ -318,6 +318,8 @@ binport cp SOURCE DESTINATION      Copy a file over native SSH (HOST:PATH)
 binport rm HOST:PATH               Remove a remote file (`-r` for directories)
 binport exec HOST -- CMD [ARGS]... Execute a command already on the remote host
 binport run HOST SCRIPT [ARGS]...  Stream and execute a local shell script
+binport inspect HOST                Capture a read-only environment snapshot
+binport diff HOST-A HOST-B          Compare two remote environments
 binport HOST TOOL [ARGUMENTS]...  Execute a tool remotely
 binport @GROUP TOOL [ARGUMENTS]... Execute concurrently across a fleet
 ```
@@ -343,6 +345,23 @@ cat diagnose.sh | binport run server-a - --verbose
 Both commands follow direct, ProxyJump, exec-hop, and configured bastion routes.
 `exec` accepts piped stdin and `--tty`; `run` uses `sh -s` by default and can
 select another interpreter with `--interpreter bash`.
+
+Find why software works on one host but fails on another—even across managed
+jump and exec-hop routes:
+
+```sh
+binport inspect server-a
+binport diff server-a server-b
+binport diff server-a server-b --section system,runtime
+binport --json diff server-a server-b
+```
+
+The read-only probe compares system, resource, runtime, configuration, network,
+accelerator, and AI-runtime facts—including GPU/NPU models, drivers, CUDA/ROCm/MUSA,
+NUMA, RDMA, shared memory, CPU acceleration features, and installed inference
+packages. It reads only a safe allowlist of tuning variables and never scans
+credentials. By default `diff` prints only changed fields; add `--all` to
+include equal values.
 
 Edit a remote file with the bundled `micro` editor (PTY is automatic), or copy
 regular files without invoking external `ssh`/`scp` processes:

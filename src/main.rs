@@ -3,6 +3,7 @@ mod cmd;
 use clap::{Parser, Subcommand};
 use cmd::auth::AuthArgs;
 use cmd::bastion::BastionArgs;
+use cmd::environment::{DiffArgs, InspectArgs};
 use cmd::fleet::DoctorArgs;
 use cmd::host::HostArgs;
 use cmd::lifecycle::{BuildArgs, FetchArgs, ProjectArgs, TransferArgs};
@@ -98,6 +99,10 @@ enum CommandKind {
     Exec(ExecArgs),
     /// Stream a local script to a remote host and execute it
     Run(RunArgs),
+    /// Capture a structured, read-only snapshot of a remote environment
+    Inspect(InspectArgs),
+    /// Compare two remote environments
+    Diff(DiffArgs),
     /// Execute a toolbox tool on an SSH host
     #[command(external_subcommand)]
     Remote(Vec<OsString>),
@@ -146,6 +151,8 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Tunnel(args) => cmd::tunnel::run(args, use_password),
         CommandKind::Exec(args) => cmd::native_exec::exec(args, use_password, tty, json),
         CommandKind::Run(args) => cmd::native_exec::run(args, use_password, json),
+        CommandKind::Inspect(args) => cmd::environment::inspect(args, use_password, json),
+        CommandKind::Diff(args) => cmd::environment::diff(args, use_password, json),
         CommandKind::Remote(args) => {
             cmd::remote::run(args, use_password, verbose, concurrency, json, tty)
         }
