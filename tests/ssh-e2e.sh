@@ -6,9 +6,14 @@ export LC_ALL=C
 # are disposable; no network access or long-lived credentials are required.
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/binport-ssh-e2e.XXXXXX")
-entry_port=$((32000 + ($$ % 19000)))
-target_port=$((entry_port + 1))
-deep_port=$((entry_port + 2))
+set -- $(python3 -c 'import socket; sockets=[socket.socket() for _ in range(7)]; [sock.bind(("127.0.0.1", 0)) for sock in sockets]; print(" ".join(str(sock.getsockname()[1]) for sock in sockets))')
+entry_port=$1
+target_port=$2
+deep_port=$3
+release_port=$4
+http_port=$5
+local_tunnel_port=$6
+deep_tunnel_port=$7
 entry_sshd_pid=
 target_sshd_pid=
 deep_sshd_pid=
@@ -248,7 +253,6 @@ printf '%s' "$guided_output" | grep -q 'Strategy: exec-hop' || \
   fail "guided setup did not select exec-hop"
 grep -q 'BinportStrategy exec-hop' "$test_root/client/.ssh/binport_config" || \
   fail "guided setup did not persist exec-hop"
-release_port=$((deep_port + 1))
 package=binport-linux-amd64
 mkdir -p "$test_root/release/$package"
 cp "$binport_hop_bin" "$test_root/release/$package/binport-hop"
@@ -329,8 +333,6 @@ env HOME="$test_root/client" "$hop_env" "$binport_bin" rm \
   "e2e-hop:$hop_remote" >/dev/null
 test ! -e "$hop_remote" || fail "exec-hop remote file was not removed"
 
-http_port=$((deep_port + 2))
-local_tunnel_port=$((deep_port + 3))
 python3 -m http.server "$http_port" --bind 127.0.0.1 \
   --directory "$test_root/target" >"$test_root/http.log" 2>&1 &
 http_pid=$!
@@ -353,7 +355,6 @@ grep -q 'Directory listing' "$test_root/tunnel-response.html" || \
 kill "$tunnel_pid" 2>/dev/null || true
 wait "$tunnel_pid" 2>/dev/null || true
 tunnel_pid=
-deep_tunnel_port=$((deep_port + 4))
 env HOME="$test_root/client" "$hop_env" "$binport_bin" tunnel \
   "$deep_tunnel_port:127.0.0.1:$http_port" e2e-deep \
   >"$test_root/deep-tunnel.log" 2>&1 &
