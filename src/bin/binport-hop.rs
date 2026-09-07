@@ -103,8 +103,14 @@ async fn run_exec() -> io::Result<u32> {
     let status = loop {
         tokio::select! {
             result = &mut execution => break result.map_err(io::Error::other)?,
-            Some(data) = stdout_rx.recv() => stdout.write_all(&data).await?,
-            Some(data) = stderr_rx.recv() => stderr.write_all(&data).await?,
+            Some(data) = stdout_rx.recv() => {
+                stdout.write_all(&data).await?;
+                stdout.flush().await?;
+            },
+            Some(data) = stderr_rx.recv() => {
+                stderr.write_all(&data).await?;
+                stderr.flush().await?;
+            },
         }
     };
     feeder.await.map_err(io::Error::other)??;
@@ -228,8 +234,14 @@ async fn relay_process(
     let status = loop {
         tokio::select! {
             result = &mut execution => break result.map_err(io::Error::other)?,
-            Some(data) = stdout_rx.recv() => stdout.write_all(&data).await?,
-            Some(data) = stderr_rx.recv() => stderr.write_all(&data).await?,
+            Some(data) = stdout_rx.recv() => {
+                stdout.write_all(&data).await?;
+                stdout.flush().await?;
+            },
+            Some(data) = stderr_rx.recv() => {
+                stderr.write_all(&data).await?;
+                stderr.flush().await?;
+            },
         }
     };
     feeder.abort();

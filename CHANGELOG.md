@@ -6,6 +6,9 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+- Flush nested exec-hop output immediately so interactive keystrokes do not
+  remain hidden until Enter is pressed.
+
 ## [0.5.1] - 2026-09-01
 
 ### Added
