@@ -11,6 +11,84 @@ pub struct ManagedKey {
     pub created: bool,
 }
 
+fn bastion_credential_name(host: &str, port: u16, user: &str) -> String {
+    format!("{user}@{host}:{port}")
+}
+
+fn bastion_credential_path(host: &str, port: u16, user: &str) -> io::Result<PathBuf> {
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(bastion_credential_name(host, port, user).as_bytes())
+    );
+    Ok(config_root()?.join("credentials").join(&digest[..24]))
+}
+
+fn route_credential_path(alias: &str) -> io::Result<PathBuf> {
+    let digest = format!("{:x}", Sha256::digest(format!("route:{alias}").as_bytes()));
+    Ok(config_root()?.join("credentials").join(&digest[..24]))
+}
+
+fn save_password_file(path: &Path, password: &str) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("credential path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    set_private_permissions(parent, true)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(password.as_bytes())?;
+    file.sync_all()?;
+    set_private_permissions(path, false)
+}
+
+pub fn save_bastion_password(host: &str, port: u16, user: &str, password: &str) -> io::Result<()> {
+    save_password_file(&bastion_credential_path(host, port, user)?, password)
+}
+
+pub fn read_bastion_password(host: &str, port: u16, user: &str) -> io::Result<Option<String>> {
+    let path = bastion_credential_path(host, port, user)?;
+    match fs::read_to_string(path) {
+        Ok(password) => Ok(Some(password)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn remove_bastion_password(host: &str, port: u16, user: &str) -> io::Result<bool> {
+    let path = bastion_credential_path(host, port, user)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn save_route_password(alias: &str, password: &str) -> io::Result<()> {
+    save_password_file(&route_credential_path(alias)?, password)
+}
+
+pub fn read_route_password(alias: &str) -> io::Result<Option<String>> {
+    match fs::read_to_string(route_credential_path(alias)?) {
+        Ok(password) => Ok(Some(password)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn remove_route_password(alias: &str) -> io::Result<bool> {
+    match fs::remove_file(route_credential_path(alias)?) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn config_root() -> io::Result<PathBuf> {
     if let Some(path) = env::var_os("BINPORT_CONFIG_DIR") {
         return Ok(PathBuf::from(path));

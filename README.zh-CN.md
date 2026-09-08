@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.4.0" \
+BINPORT_VERSION="v0.6.0" \
 sh install.sh
 ```
 
@@ -85,7 +85,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.4.0 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.6.0 --locked
 ```
 
 ## 不用手写 SSH Config
@@ -199,9 +199,10 @@ Passwordless authentication is ready for server-a
 $ binport server-a rg --version
 ```
 
-密码只用于本次连接，不会持久化。binport 专用私钥保存在当前平台的用户
+普通 SSH 主机的密码只用于安装公钥，不会持久化。binport 专用私钥保存在当前平台的用户
 配置目录中，与现有 SSH Key 隔离，并强制设置严格权限。重复 setup 不会
-重复追加远端公钥。
+重复追加远端公钥。无法使用公钥认证的企业堡垒机会把验证成功的密码保存到
+Binport 用户凭证目录，此后所有终端自动复用。
 
 ```sh
 binport auth status server-a
@@ -290,11 +291,13 @@ binport warm HOST|@GROUP           提前将缺失工具传输到远端
 binport plan HOST|@GROUP TOOL      离线预览主机、路由和工具选择
 binport watch HOST TOOL            持续观察命令结果变化
 binport cp 源 目标                  通过内置 SSH 复制文件（远端写作 HOST:PATH）
+binport cp -r 源 目标               递归复制目录树
 binport rm HOST:PATH               删除远程文件（目录需要 `-r`）
 binport exec HOST -- CMD [ARGS]... 执行远端已经安装的命令
 binport run HOST SCRIPT [ARGS]...  流式执行本地 Shell 脚本
 binport inspect HOST               采集只读环境快照
 binport diff HOST-A HOST-B         对比两台远端主机的环境
+binport profile HOST               采样主机与加速器瓶颈
 binport HOST TOOL [ARGS]...        在单台远程主机执行工具
 binport @GROUP TOOL [ARGS]...      在一组主机上并发执行工具
 ```
@@ -327,12 +330,17 @@ binport inspect server-a
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
+binport profile server-a --duration 10 --interval 1
 ```
 
 只读探针覆盖系统、资源、运行时、配置、网络、加速器与 AI 运行时信息，包括
 GPU/NPU 型号与驱动、CUDA/ROCm/MUSA（摩尔线程）、NUMA、RDMA、共享内存、CPU 加速指令集，以及
 PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全的调优白名单，
 不会扫描凭据。`diff` 默认只展示差异，传入 `--all` 可以同时展示相同字段。
+
+`profile` 无需安装 Agent、root 或 eBPF，即可短时采样 CPU、内存、系统负载、
+磁盘和网络吞吐；检测到 NVIDIA、海光或摩尔线程加速卡时，还会汇总利用率、显存占用、
+温度和功耗，并给出初步瓶颈提示。传入 `--json` 可获得稳定的结构化结果。
 
 终端中的内存、磁盘、共享内存和加速卡显存统一使用 KiB/MiB/GiB/TiB；JSON
 在 `raw_values` 中保留精确字节数。检测到昇腾环境后还会展示卡数、芯片数、
@@ -351,6 +359,7 @@ binport server-a edit /etc/myapp/config.toml
 binport cp ./config.toml server-a:/tmp/config.toml
 binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
+binport cp -r ./assets server-a:/tmp/
 binport rm server-a:/tmp/a.txt
 binport rm --recursive server-a:/tmp/old-output
 ```

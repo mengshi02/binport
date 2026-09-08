@@ -285,6 +285,7 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
     let mut probe = ProbeDecision {
         offer_exec_hop: false,
         entry_password: None,
+        direct_password: None,
     };
     if confirm("Test this route before saving?", true)? {
         println!("\nTesting capabilities...");
@@ -322,6 +323,16 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
         } else {
             needs_password = true;
         }
+    } else if entry.proxy_jump.is_none()
+        && entry.bastion_proxy.is_none()
+        && let Some(password) = probe.direct_password.as_deref()
+    {
+        println!("\nThe host password was used only for this test and was not saved.");
+        if confirm("Set up passwordless access to this host now?", true)? {
+            setup_passwordless(&entry.name, password, "host")?;
+        } else {
+            needs_password = true;
+        }
     }
     println!("\nTry:");
     if needs_password {
@@ -335,6 +346,7 @@ fn add_interactive(args: HostAddArgs, use_password: bool) -> io::Result<u8> {
 struct ProbeDecision {
     offer_exec_hop: bool,
     entry_password: Option<String>,
+    direct_password: Option<String>,
 }
 
 fn probe_before_save(
@@ -379,6 +391,7 @@ fn probe_before_save(
             offer_exec_hop: report.entry.state == CapabilityState::Supported
                 && report.target.is_none(),
             entry_password: jump_password,
+            direct_password: None,
         });
     }
 
@@ -387,25 +400,34 @@ fn probe_before_save(
         .then(|| rpassword::prompt_password("SSH password (leave empty for key/agent): "))
         .transpose()?
         .filter(|value| !value.is_empty());
-    match runtime.block_on(binport::probe::probe_destination(
+    let connected = match runtime.block_on(binport::probe::probe_destination(
         &destination,
         password.as_deref(),
         true,
     )) {
-        Ok(report) => print_probe_report(&entry.name, &report),
+        Ok(report) => {
+            print_probe_report(&entry.name, &report);
+            true
+        }
         Err(error) => {
             println!("  ✗ Connection: failed");
             println!("      {error}");
             println!("  ! The route may still be saved and tested later.");
+            false
         }
-    }
+    };
     Ok(ProbeDecision {
         offer_exec_hop: false,
         entry_password: None,
+        direct_password: connected.then_some(password).flatten(),
     })
 }
 
 fn setup_passwordless_entry(alias: &str, password: &str) -> io::Result<()> {
+    setup_passwordless(alias, password, "entry host")
+}
+
+fn setup_passwordless(alias: &str, password: &str, label: &str) -> io::Result<()> {
     let key = binport::auth::ensure_managed_key(alias)?;
     let mut destination = Destination::resolve(alias)?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
@@ -423,7 +445,7 @@ fn setup_passwordless_entry(alias: &str, password: &str) -> io::Result<()> {
                 String::from_utf8_lossy(&stderr).trim()
             )));
         }
-        destination.identity = Some(key.private_path.clone());
+        destination.managed_identity = Some(key.private_path.clone());
         let verification = binport::ssh::NativeSsh::connect(&destination, None).await?;
         let (status, _, stderr) = verification.execute_capture("true").await?;
         if status != 0 {
@@ -434,7 +456,7 @@ fn setup_passwordless_entry(alias: &str, password: &str) -> io::Result<()> {
         }
         Ok::<_, io::Error>(())
     })?;
-    println!("  ✓ Passwordless access ready for entry host {alias:?}");
+    println!("  ✓ Passwordless access ready for {label} {alias:?}");
     Ok(())
 }
 
@@ -802,7 +824,7 @@ fn test_exec_hop(
         )
     })?;
     let password = use_password
-        .then(|| rpassword::prompt_password("Entry-host SSH password: "))
+        .then(|| rpassword::prompt_password("Target SSH password: "))
         .transpose()?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let started = std::time::Instant::now();

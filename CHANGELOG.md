@@ -6,6 +6,35 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-08
+
+- Flush every stdout/stderr chunk in nested exec-hop relays so interactive
+  keystrokes are rendered immediately instead of waiting for Enter.
+- Initialize remote PTYs with the local terminal dimensions so Vim and other
+  full-screen applications render without wrapped or overlapping lines.
+- Add recursive directory copies with `binport cp -r` across direct, ProxyJump,
+  bastion, and exec-hop routes.
+
+- Persist enterprise-bastion passwords in Binport's user credential store so new terminal sessions authenticate without re-exporting environment variables.
+- Automatically persist a bastion password after the first successful `--password` or environment-authenticated connection.
+- Allow exec-hop helpers to connect to first-seen private targets without requiring manual known_hosts pre-warming on every intermediate node.
+- Store per-hop target passwords and forward them through the SSH-protected
+  exec-hop protocol, enabling password-only targets in recursive routes.
+
+- Fix direct-host passwordless authentication so Binport-managed keys are tried first, and offer key setup during guided direct-host configuration.
+- Detect Hygon DCUs in `inspect`/`diff`, including product, device count, VRAM, driver, VBIOS, DTK, HIP, and device visibility.
+- Add agentless `profile` sampling for CPU, memory, disk, network, NVIDIA, Hygon, and Moore Threads utilization with bottleneck observations.
+
+### Added
+
+- Show terminal-aware connection and collection progress for `inspect` and
+  concurrent two-host `diff` operations.
+
+### Fixed
+
+- Render an absent Java runtime as unavailable instead of capturing a localized
+  shell error, and normalize unlimited cgroup v1 CPU quotas.
+
 ## [0.5.1] - 2026-09-01
 
 ### Added
@@ -265,7 +294,10 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mengshi02/binport/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/mengshi02/binport/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/mengshi02/binport/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mengshi02/binport/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mengshi02/binport/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/mengshi02/binport/compare/v0.2.3...v0.2.4

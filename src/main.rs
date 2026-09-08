@@ -9,6 +9,7 @@ use cmd::host::HostArgs;
 use cmd::lifecycle::{BuildArgs, FetchArgs, ProjectArgs, TransferArgs};
 use cmd::native_exec::{ExecArgs, RunArgs};
 use cmd::plan::PlanArgs;
+use cmd::profile::ProfileArgs;
 use cmd::registry::{PullArgs, PushArgs};
 use cmd::transfer::{CpArgs, RmArgs};
 use cmd::tunnel::TunnelArgs;
@@ -67,7 +68,7 @@ enum CommandKind {
     Fetch(FetchArgs),
     /// Show toolbox and cache status
     Status(ProjectArgs),
-    /// Copy a file between local and remote paths
+    /// Copy files or directory trees between local and remote paths
     Cp(CpArgs),
     /// Remove a remote file or directory
     Rm(RmArgs),
@@ -103,6 +104,8 @@ enum CommandKind {
     Inspect(InspectArgs),
     /// Compare two remote environments
     Diff(DiffArgs),
+    /// Sample remote host and accelerator utilization to find bottlenecks
+    Profile(ProfileArgs),
     /// Execute a toolbox tool on an SSH host
     #[command(external_subcommand)]
     Remote(Vec<OsString>),
@@ -153,6 +156,7 @@ fn run(cli: Cli) -> io::Result<u8> {
         CommandKind::Run(args) => cmd::native_exec::run(args, use_password, json),
         CommandKind::Inspect(args) => cmd::environment::inspect(args, use_password, json),
         CommandKind::Diff(args) => cmd::environment::diff(args, use_password, json),
+        CommandKind::Profile(args) => cmd::profile::run(args, use_password, json),
         CommandKind::Remote(args) => {
             cmd::remote::run(args, use_password, verbose, concurrency, json, tty)
         }

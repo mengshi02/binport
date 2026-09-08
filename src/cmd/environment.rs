@@ -24,7 +24,7 @@ emit resources.root_filesystem "$(df -PT / 2>/dev/null | awk 'NR==2 {print $2}')
 emit runtime.shell "${SHELL:-unknown}"
 emit runtime.container "$(if command -v docker >/dev/null 2>&1; then first docker --version; elif command -v nerdctl >/dev/null 2>&1; then first nerdctl --version; elif command -v podman >/dev/null 2>&1; then first podman --version; fi)"
 emit runtime.python "$(first python3 --version)"
-emit runtime.java "$(java -version 2>&1 | head -n 1)"
+emit runtime.java "$(command -v java >/dev/null 2>&1 && java -version 2>&1 | head -n 1)"
 emit runtime.gcc "$(first gcc --version)"
 emit runtime.cmake "$(first cmake --version)"
 emit configuration.nofile "$(ulimit -n 2>/dev/null || true)"
@@ -49,6 +49,31 @@ emit_if accelerator.nvidia_pcie "$(command -v nvidia-smi >/dev/null 2>&1 && nvid
 emit_if accelerator.cuda_driver_api "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([^ ]*\).*/\1/p' | head -n 1)"
 emit_if accelerator.cuda "$(command -v nvcc >/dev/null 2>&1 && nvcc --version 2>/dev/null | awk '/release/ {print $0; exit}')"
 emit_if accelerator.rocm "$(if [ -r /opt/rocm/.info/version ]; then cat /opt/rocm/.info/version; elif command -v hipcc >/dev/null 2>&1; then hipcc --version 2>/dev/null | head -n 1; fi)"
+hy_smi="$(command -v hy-smi 2>/dev/null || true)"
+if [ -z "$hy_smi" ]; then
+  for candidate in /opt/hyhal/bin/hy-smi /opt/dtk/bin/hy-smi /opt/hygondtk/bin/hy-smi; do
+    if [ -x "$candidate" ]; then hy_smi="$candidate"; break; fi
+  done
+fi
+if [ -n "$hy_smi" ]; then
+  hygon_list="$($hy_smi -L 2>/dev/null || true)"
+  hygon_info="$($hy_smi 2>/dev/null || true)"
+  hygon_memory="$($hy_smi --showmeminfo vram 2>/dev/null || true)"
+  hygon_product="$($hy_smi --showproductname 2>/dev/null || true)"
+  hygon_hw="$($hy_smi --showhw 2>/dev/null || true)"
+  hygon_fw="$($hy_smi --showfwinfo 2>/dev/null || true)"
+fi
+emit accelerator.hygon_dcu_count "$(if [ -n "$hy_smi" ]; then count=$(printf '%s\n' "$hygon_list" | grep -Eic '^(GPU|DCU)[^0-9]*[0-9]'); if [ "$count" -eq 0 ]; then count=$(printf '%s\n' "$hygon_info" | grep -Eic '^[[:space:]]*[0-9]+[[:space:]]'); fi; printf '%s' "$count"; else printf 0; fi)"
+emit_if accelerator.hygon_dcu_products "$(printf '%s\n%s\n%s\n' "$hygon_product" "$hygon_list" "$hygon_info" | grep -Eio '(BW|K|Z)[0-9]+(_AI|L)?' | sort -u | paste -sd ',' -)"
+emit_if accelerator.hygon_dcu_vendor "$(printf '%s\n' "$hygon_product" | sed -n 's/.*Card Vendor:[[:space:]]*//p' | sort -u | paste -sd ',' -)"
+emit_if accelerator.hygon_dcu_driver "$(if [ -n "$hy_smi" ]; then $hy_smi --showdriverversion 2>/dev/null | sed -n 's/.*[Dd]river[^:]*:[[:space:]]*//p' | head -n 1; fi)"
+emit_if accelerator.hygon_dcu_vbios "$(if [ -n "$hy_smi" ]; then $hy_smi --showvbios 2>/dev/null | sed -n 's/.*[Vv][Bb][Ii][Oo][Ss][^:]*:[[:space:]]*//p' | sort -u | paste -sd ',' -; fi)"
+emit_if accelerator.hygon_dcu_vram_mib "$(printf '%s\n' "$hygon_memory" | awk 'BEGIN{IGNORECASE=1} /total/ && /memory/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}')"
+emit_if accelerator.hygon_dcu_device_ids "$(printf '%s\n' "$hygon_hw" | awk '/^[0-9]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+[0-9A-Fa-f]+/ {print "DID=" $2 ",SSID=" $3; exit}')"
+emit_if accelerator.hygon_dcu_bus_ids "$(printf '%s\n' "$hygon_hw" | awk '/^[0-9]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+[0-9A-Fa-f]+/ {print $NF}' | paste -sd ',' -)"
+emit_if accelerator.hygon_dcu_firmware "$(printf '%s\n' "$hygon_fw" | awk -F: '/HCU\[0\]/ && /Firmware Version/ {name=$2; sub(/[[:space:]]*Firmware Version[[:space:]]*$/, "", name); value=$NF; gsub(/^[[:space:]]+|[[:space:]]+$/, "", name); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); printf "%s%s=%s", separator, name, value; separator=","}')"
+emit_if accelerator.dtk "$(for file in /opt/dtk/.info/version /opt/dtk/.info/version-dev /opt/hygondtk/.info/version; do [ -r "$file" ] && { head -n 1 "$file"; break; }; done)"
+emit_if accelerator.hip "$(hipconfig_bin=$(command -v hipconfig 2>/dev/null || true); if [ -z "$hipconfig_bin" ]; then for candidate in /opt/dtk/bin/hipconfig /opt/dtk/hip/bin/hipconfig /opt/dtk-*/hip/bin/hipconfig /opt/hygondtk/bin/hipconfig /opt/hygondtk/hip/bin/hipconfig; do [ -x "$candidate" ] && { hipconfig_bin="$candidate"; break; }; done; fi; if [ -n "$hipconfig_bin" ]; then $hipconfig_bin --version 2>/dev/null | head -n 1; elif command -v hipcc >/dev/null 2>&1; then hipcc --version 2>/dev/null | sed -n '/HIP version/ {p;q;}'; fi)"
 if command -v npu-smi >/dev/null 2>&1; then
   ascend_list="$(npu-smi info -l 2>/dev/null)"
   ascend_id="$(printf '%s\n' "$ascend_list" | sed -n 's/.*NPU ID[^:]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"
@@ -80,6 +105,7 @@ emit ai_runtime.hugepages_total "$(awk '/^HugePages_Total:/ {print $2}' /proc/me
 emit_if ai_runtime.cuda_visible_devices "${CUDA_VISIBLE_DEVICES:-}"
 emit_if ai_runtime.nvidia_visible_devices "${NVIDIA_VISIBLE_DEVICES:-}"
 emit_if ai_runtime.rocr_visible_devices "${ROCR_VISIBLE_DEVICES:-}"
+emit_if ai_runtime.hip_visible_devices "${HIP_VISIBLE_DEVICES:-}"
 emit_if ai_runtime.ascend_visible_devices "${ASCEND_RT_VISIBLE_DEVICES:-}"
 emit_if ai_runtime.musa_visible_devices "${MUSA_VISIBLE_DEVICES:-}"
 emit_if ai_runtime.omp_num_threads "${OMP_NUM_THREADS:-}"
@@ -128,7 +154,13 @@ struct Difference {
 
 pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<u8> {
     let password = prompt_password(use_password)?;
-    let snapshot = runtime()?.block_on(collect(&args.target, password.as_deref()))?;
+    let progress = binport::progress::TaskProgress::new(
+        format!("Inspecting {} · connecting and collecting", args.target),
+        !json,
+    );
+    let result = runtime()?.block_on(collect(&args.target, password.as_deref()));
+    progress.finish();
+    let snapshot = result?;
     let snapshot = filter(snapshot, &args.section);
     if json {
         println!(
@@ -150,12 +182,38 @@ pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<
 pub fn diff(args: DiffArgs, use_password: bool, json: bool) -> io::Result<u8> {
     let password = prompt_password(use_password)?;
     let runtime = runtime()?;
-    let (left, right) = runtime.block_on(async {
+    let progress = binport::progress::TaskProgress::new(
+        format!("Comparing {} <-> {} · connecting", args.left, args.right),
+        !json,
+    );
+    let left_progress = progress.clone();
+    let right_progress = progress.clone();
+    let result = runtime.block_on(async {
         tokio::try_join!(
-            collect(&args.left, password.as_deref()),
-            collect(&args.right, password.as_deref())
+            async {
+                let result = collect(&args.left, password.as_deref()).await;
+                if result.is_ok() {
+                    left_progress.set_message(format!(
+                        "Collected {} · waiting for {}",
+                        args.left, args.right
+                    ));
+                }
+                result
+            },
+            async {
+                let result = collect(&args.right, password.as_deref()).await;
+                if result.is_ok() {
+                    right_progress.set_message(format!(
+                        "Collected {} · waiting for {}",
+                        args.right, args.left
+                    ));
+                }
+                result
+            }
         )
-    })?;
+    });
+    progress.finish();
+    let (left, right) = result?;
     let left = filter(left, &args.section);
     let right = filter(right, &args.section);
     let differences = compare(&left, &right, args.all);
@@ -287,7 +345,11 @@ fn normalize_value(field: &str, value: &str) -> (String, String, Option<u64>) {
         "cgroup_cpu_quota" if value.starts_with("max ") => {
             return (field.to_owned(), "unlimited".into(), None);
         }
+        "cgroup_cpu_quota" if value.starts_with("-1/") => {
+            return (field.to_owned(), "unlimited".into(), None);
+        }
         "moore_threads_vram_mib" => ("moore_threads_vram", 1024 * 1024, Some(" per GPU")),
+        "hygon_dcu_vram_mib" => ("hygon_dcu_vram", 1024 * 1024, Some(" per DCU")),
         "speed_mbps" => {
             let display = value.parse::<u64>().map_or_else(
                 |_| "unavailable".to_owned(),
@@ -470,6 +532,48 @@ mod tests {
         assert_eq!(
             snapshot.raw_values["resources"]["memory"],
             1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn formats_hygon_dcu_memory_and_compares_hygon_fields() {
+        let a = parse(
+            "a",
+            "accelerator.hygon_dcu_products\tBW1102\naccelerator.hygon_dcu_count\t8\naccelerator.hygon_dcu_vram_mib\t147440\naccelerator.dtk\t26.04\n",
+        )
+        .unwrap();
+        let b = parse(
+            "b",
+            "accelerator.hygon_dcu_products\tBW1102\naccelerator.hygon_dcu_count\t4\naccelerator.hygon_dcu_vram_mib\t147440\naccelerator.dtk\t25.04\n",
+        )
+        .unwrap();
+        assert_eq!(
+            a.values["accelerator"]["hygon_dcu_vram"],
+            "143.98 GiB per DCU"
+        );
+        let differences = compare(&a, &b, false);
+        assert!(
+            differences
+                .iter()
+                .any(|item| item.field == "hygon_dcu_count")
+        );
+        assert!(differences.iter().any(|item| item.field == "dtk"));
+    }
+
+    #[test]
+    fn normalizes_unlimited_cgroup_quotas() {
+        let snapshot = parse(
+            "a",
+            "configuration.cgroup_cpu_quota\t-1/100000\nconfiguration.cgroup_memory_limit_bytes\tmax\n",
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.values["configuration"]["cgroup_cpu_quota"],
+            "unlimited"
+        );
+        assert_eq!(
+            snapshot.values["configuration"]["cgroup_memory_limit"],
+            "unlimited"
         );
     }
 }

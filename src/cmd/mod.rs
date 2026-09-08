@@ -6,6 +6,7 @@ pub mod host;
 pub mod lifecycle;
 pub mod native_exec;
 pub mod plan;
+pub mod profile;
 pub mod registry;
 pub mod remote;
 pub mod runtime;

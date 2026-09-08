@@ -1,8 +1,6 @@
-use super::runtime::{ad_hoc_bastion, ad_hoc_route};
-use binport::hop::ExecHop;
+use super::runtime::{RemoteFile, connect_exec_hop, connect_host, parse_remote_file};
 use binport::progress::TransferProgress;
 use binport::remote_command;
-use binport::ssh::{Destination, NativeSsh};
 use clap::Args;
 use std::ffi::OsStr;
 use std::fs;
@@ -16,6 +14,9 @@ pub struct CpArgs {
     source: String,
     /// Local path or HOST:PATH
     destination: String,
+    /// Copy a directory tree recursively
+    #[arg(short = 'r', long)]
+    recursive: bool,
 }
 
 #[derive(Debug, Args)]
@@ -30,15 +31,13 @@ pub struct RmArgs {
     force: bool,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct RemoteFile<'a> {
-    host: &'a str,
-    path: &'a str,
-}
-
 pub fn copy(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
-    let source = remote_file(&args.source)?;
-    let destination = remote_file(&args.destination)?;
+    if args.recursive {
+        let destination = recursive_destination(&args.source, &args.destination)?;
+        return copy_directory(&args.source, &destination, use_password, json);
+    }
+    let source = parse_remote_file(&args.source)?;
+    let destination = parse_remote_file(&args.destination)?;
     if source.is_none() && destination.is_none() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -103,8 +102,151 @@ pub fn copy(args: CpArgs, use_password: bool, json: bool) -> io::Result<u8> {
     Ok(0)
 }
 
+fn copy_directory(
+    source_value: &str,
+    destination_value: &str,
+    use_password: bool,
+    json: bool,
+) -> io::Result<u8> {
+    let source = parse_remote_file(source_value)?;
+    let destination = parse_remote_file(destination_value)?;
+    if source.is_none() && destination.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "at least one cp path must use HOST:PATH",
+        ));
+    }
+    if source.is_none() && !Path::new(source_value).is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{source_value} is not a directory"),
+        ));
+    }
+    let password = use_password
+        .then(|| rpassword::prompt_password("SSH password: "))
+        .transpose()?;
+    let archive = copy_temp_path();
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let result = runtime.block_on(async {
+        match source {
+            Some(ref remote) => {
+                download_remote_directory(remote, &archive, password.as_deref(), !json).await?
+            }
+            None => archive_local_directory(Path::new(source_value), &archive)?,
+        }
+        match destination {
+            Some(ref remote) => {
+                upload_remote_directory(remote, &archive, password.as_deref(), !json).await
+            }
+            None => extract_local_directory(&archive, Path::new(destination_value)),
+        }
+    });
+    let bytes = fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
+    let _ = fs::remove_file(&archive);
+    result?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source": source_value, "destination": destination_value,
+                "archive_bytes": bytes, "recursive": true, "ok": true,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("Copied directory: {source_value} -> {destination_value}");
+    }
+    Ok(0)
+}
+
+fn archive_local_directory(source: &Path, archive: &Path) -> io::Result<()> {
+    let file = fs::File::create(archive)?;
+    let mut builder = tar::Builder::new(file);
+    builder.follow_symlinks(false);
+    builder.append_dir_all(".", source)?;
+    builder.finish()
+}
+
+fn extract_local_directory(archive: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+    tar::Archive::new(fs::File::open(archive)?).unpack(destination)
+}
+
+async fn download_remote_directory(
+    source: &RemoteFile<'_>,
+    archive: &Path,
+    password: Option<&str>,
+    show_progress: bool,
+) -> io::Result<()> {
+    let command = remote_command::download_directory(source.path)?;
+    let progress = TransferProgress::new(
+        format!("archive {}:{}", source.host, source.path),
+        None,
+        show_progress,
+    );
+    let (status, stderr) =
+        if let Some(hop) = connect_exec_hop(source.host, password, show_progress).await? {
+            hop.download_file(command, archive, progress).await?
+        } else {
+            connect_host(source.host, password)
+                .await?
+                .download_file(&command, archive, progress)
+                .await?
+        };
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "remote directory read failed for {}:{}: {}",
+            source.host,
+            source.path,
+            String::from_utf8_lossy(&stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+async fn upload_remote_directory(
+    destination: &RemoteFile<'_>,
+    archive: &Path,
+    password: Option<&str>,
+    show_progress: bool,
+) -> io::Result<()> {
+    let command = remote_command::upload_directory(destination.path)?;
+    let progress = TransferProgress::new(
+        format!("extract {}:{}", destination.host, destination.path),
+        Some(fs::metadata(archive)?.len()),
+        show_progress,
+    );
+    let (status, stderr) =
+        if let Some(hop) = connect_exec_hop(destination.host, password, show_progress).await? {
+            let (status, _, stderr) = hop.upload_file(command, archive, progress).await?;
+            (status, stderr)
+        } else {
+            connect_host(destination.host, password)
+                .await?
+                .upload_file(&command, archive, progress)
+                .await?
+        };
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "remote directory write failed for {}:{}: {}",
+            destination.host,
+            destination.path,
+            String::from_utf8_lossy(&stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+fn recursive_destination(source: &str, destination: &str) -> io::Result<String> {
+    if !destination.ends_with('/') && !destination.ends_with('\\') {
+        return Ok(destination.to_owned());
+    }
+    let name = source_name(source.trim_end_matches(['/', '\\']))?;
+    Ok(format!("{destination}{name}"))
+}
+
 pub fn remove(args: RmArgs, use_password: bool, json: bool) -> io::Result<u8> {
-    let target = remote_file(&args.target)?.ok_or_else(|| {
+    let target = parse_remote_file(&args.target)?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "rm requires a remote path in HOST:PATH form",
@@ -151,22 +293,6 @@ pub fn remove(args: RmArgs, use_password: bool, json: bool) -> io::Result<u8> {
     Ok(0)
 }
 
-fn remote_file(value: &str) -> io::Result<Option<RemoteFile<'_>>> {
-    let Some((host, path)) = value.split_once(':') else {
-        return Ok(None);
-    };
-    if host.len() == 1 && host.as_bytes()[0].is_ascii_alphabetic() {
-        return Ok(None);
-    }
-    if host.is_empty() || path.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "remote paths use HOST:PATH with a non-empty host and path",
-        ));
-    }
-    Ok(Some(RemoteFile { host, path }))
-}
-
 fn validate_remove_path(path: &str) -> io::Result<()> {
     let trimmed = path.trim_end_matches('/');
     if matches!(trimmed, "" | "." | ".." | "~" | "$HOME")
@@ -181,46 +307,13 @@ fn validate_remove_path(path: &str) -> io::Result<()> {
 }
 
 fn source_name(value: &str) -> io::Result<String> {
-    let path = remote_file(value)?.map_or(value, |remote| remote.path);
+    let path = parse_remote_file(value)?.map_or(value, |remote| remote.path);
     PathBuf::from(path)
         .file_name()
         .and_then(OsStr::to_str)
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "source has no file name"))
-}
-
-async fn connect_host(host: &str, password: Option<&str>) -> io::Result<NativeSsh> {
-    if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
-        let bastion_dest = Destination::resolve(bastion_alias)?;
-        let mut target_dest = Destination::resolve(target_alias)?;
-        apply_ad_hoc_bastion(&mut target_dest, &bastion_dest)?;
-        return NativeSsh::connect(&target_dest, password).await;
-    }
-    if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
-        let jump = NativeSsh::connect_jump(jump_host, password).await?;
-        let destination = Destination::resolve(target_host)?;
-        return NativeSsh::connect_with_jump(&destination, password, &jump).await;
-    }
-    NativeSsh::connect(&Destination::resolve(host)?, password).await
-}
-
-fn apply_ad_hoc_bastion(target: &mut Destination, bastion: &Destination) -> io::Result<()> {
-    if target.proxy_jump.is_some() || target.bastion_proxy.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "target already has a proxy configured; ad-hoc bastion route is not applicable",
-        ));
-    }
-    target.bastion_proxy = Some(binport::ssh::BastionProxy {
-        host: bastion.hostname.clone(),
-        port: bastion.port,
-        user: bastion.user.clone(),
-        account: target.user.clone(),
-        preset: None,
-        format: "{user}/{host}/{account}".into(),
-    });
-    Ok(())
 }
 
 async fn download_remote_file(
@@ -365,22 +458,6 @@ async fn upload_remote_file(
     Ok(())
 }
 
-async fn connect_exec_hop(
-    host: &str,
-    password: Option<&str>,
-    show_progress: bool,
-) -> io::Result<Option<ExecHop>> {
-    let Some(entry) = binport::host::find(host)? else {
-        return Ok(None);
-    };
-    if entry.strategy.as_deref() != Some("exec-hop") {
-        return Ok(None);
-    }
-    ExecHop::connect_host(&entry, password, show_progress)
-        .await
-        .map(Some)
-}
-
 fn write_local_file(destination: &str, source: &str, input: &Path) -> io::Result<()> {
     let mut path = PathBuf::from(destination);
     if path.is_dir() || destination.ends_with(std::path::MAIN_SEPARATOR) {
@@ -408,15 +485,17 @@ fn copy_temp_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{remote_file, validate_remove_path};
+    use super::{parse_remote_file, recursive_destination, validate_remove_path};
 
     #[test]
     fn distinguishes_remote_paths_from_windows_drives() {
-        let remote = remote_file("server-a:/var/log/app.log").unwrap().unwrap();
+        let remote = parse_remote_file("server-a:/var/log/app.log")
+            .unwrap()
+            .unwrap();
         assert_eq!(remote.host, "server-a");
         assert_eq!(remote.path, "/var/log/app.log");
-        assert!(remote_file(r"C:\temp\app.log").unwrap().is_none());
-        assert!(remote_file("server-a:").is_err());
+        assert!(parse_remote_file(r"C:\temp\app.log").unwrap().is_none());
+        assert!(parse_remote_file("server-a:").is_err());
     }
 
     #[test]
@@ -425,5 +504,21 @@ mod tests {
             assert!(validate_remove_path(path).is_err(), "accepted {path:?}");
         }
         assert!(validate_remove_path("/tmp/binport-test").is_ok());
+    }
+
+    #[test]
+    fn recursive_copy_resolves_destination_root() {
+        assert_eq!(
+            recursive_destination("./assets", "server:/tmp/").unwrap(),
+            "server:/tmp/assets"
+        );
+        assert_eq!(
+            recursive_destination("server:/tmp/assets/", "./backup/").unwrap(),
+            "./backup/assets"
+        );
+        assert_eq!(
+            recursive_destination("./assets", "server:/tmp/new-name").unwrap(),
+            "server:/tmp/new-name"
+        );
     }
 }

@@ -26,6 +26,8 @@ pub struct ExecRequest {
     pub target_port: u16,
     pub command: String,
     pub stdin_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     #[serde(default)]
     pub tty: bool,
     #[serde(default)]
@@ -37,6 +39,8 @@ pub struct ExecRequest {
 pub struct HopTarget {
     pub target: String,
     pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -47,6 +51,8 @@ pub struct RelayRequest {
     pub target_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     #[serde(default)]
     pub remaining: Vec<HopTarget>,
 }
@@ -78,6 +84,7 @@ impl RelayRequest {
             target_port,
             remote_host,
             remote_port,
+            password: None,
             remaining: Vec::new(),
         })
     }
@@ -114,6 +121,7 @@ impl ExecRequest {
             target_port,
             command,
             stdin_bytes,
+            password: None,
             tty: false,
             remaining: Vec::new(),
         })
@@ -466,6 +474,7 @@ pub struct ExecHop {
     entry: NativeSsh,
     target: String,
     target_port: u16,
+    target_password: Option<String>,
     remote_helper: String,
     remaining: Vec<HopTarget>,
 }
@@ -488,6 +497,7 @@ fn resolve_host_chain(
         route.push(HopTarget {
             target: format!("{}@{}", current.user, current.hostname),
             port: current.port,
+            password: crate::auth::read_route_password(&current.name)?,
         });
         if route.len() > MAX_EXEC_HOPS {
             return Err(io::Error::new(
@@ -567,6 +577,7 @@ impl ExecHop {
             entry,
             target,
             target_port,
+            target_password: None,
             remote_helper,
             remaining: Vec::new(),
         })
@@ -574,19 +585,17 @@ impl ExecHop {
 
     pub async fn connect_host(
         entry: &crate::host::HostEntry,
-        entry_password: Option<&str>,
+        target_password: Option<&str>,
         show_progress: bool,
     ) -> io::Result<Self> {
+        if let Some(password) = target_password {
+            crate::auth::save_route_password(&entry.name, password)?;
+        }
         let (destination, mut route) = resolve_host_chain(entry)?;
         let first = route.remove(0);
-        let mut hop = Self::connect(
-            &destination,
-            first.target,
-            first.port,
-            entry_password,
-            show_progress,
-        )
-        .await?;
+        let mut hop =
+            Self::connect(&destination, first.target, first.port, None, show_progress).await?;
+        hop.target_password = first.password;
         hop.remaining = route;
         Ok(hop)
     }
@@ -603,6 +612,7 @@ impl ExecHop {
             input.len() as u64,
         )?;
         let mut request = request;
+        request.password = self.target_password.clone();
         request.remaining = self.remaining.clone();
         let payload = encode_request(&request, &input)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
@@ -612,8 +622,13 @@ impl ExecHop {
     }
 
     pub async fn execute_tty(&self, command: String, eof_on_quit: bool) -> io::Result<u32> {
+        // The deployed helper may predate the PTY echo fix, so carry the
+        // terminal initialization in the final command itself.
+        let (columns, rows) = crate::ssh::terminal_size();
+        let command = crate::ssh::tty_command(&command, columns, rows);
         let request = ExecRequest::new_tty(self.target.clone(), self.target_port, command)?;
         let mut request = request;
+        request.password = self.target_password.clone();
         request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
@@ -631,6 +646,7 @@ impl ExecHop {
         let size = fs::metadata(path)?.len();
         let request = ExecRequest::new(self.target.clone(), self.target_port, command, size)?;
         let mut request = request;
+        request.password = self.target_password.clone();
         request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
@@ -647,12 +663,126 @@ impl ExecHop {
     ) -> io::Result<(u32, Vec<u8>)> {
         let request = ExecRequest::new(self.target.clone(), self.target_port, command, 0)?;
         let mut request = request;
+        request.password = self.target_password.clone();
         request.remaining = self.remaining.clone();
         let header = encode_request_header(&request)?;
         let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
         self.entry
             .download_file_with_input(&helper_command, header, path, progress)
             .await
+    }
+
+    pub async fn download_file_append(
+        &self,
+        command: String,
+        path: &Path,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>)> {
+        let request = ExecRequest::new(self.target.clone(), self.target_port, command, 0)?;
+        let mut request = request;
+        request.password = self.target_password.clone();
+        request.remaining = self.remaining.clone();
+        let header = encode_request_header(&request)?;
+        let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
+        // For append mode, we need a special method that opens the file in append mode
+        // Since download_file_with_input uses File::create, we need a new approach
+        // For now, we'll use a temporary file and append it manually
+        let temp_path = path.with_extension(format!("binport-resume-{}.part", std::process::id()));
+        let (status, stderr) = self
+            .entry
+            .download_file_with_input(&helper_command, header, &temp_path, progress)
+            .await?;
+        if status == 0 {
+            // Append temp file to target
+            let mut temp_file = tokio::fs::File::open(&temp_path).await?;
+            let mut target_file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await?;
+            tokio::io::copy(&mut temp_file, &mut target_file).await?;
+            target_file.flush().await?;
+            let _ = tokio::fs::remove_file(&temp_path).await;
+        } else {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+        }
+        Ok((status, stderr))
+    }
+
+    pub async fn upload_file_from_offset(
+        &self,
+        command: String,
+        path: &Path,
+        offset: u64,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
+        let size = fs::metadata(path)?.len().saturating_sub(offset);
+        let request = ExecRequest::new(self.target.clone(), self.target_port, command, size)?;
+        let mut request = request;
+        request.password = self.target_password.clone();
+        request.remaining = self.remaining.clone();
+        let header = encode_request_header(&request)?;
+        let helper_command = crate::execute_command(&self.remote_helper, &[] as &[OsString])?;
+        // For offset uploads, we need to feed from a specific offset
+        // The execute_with_prefix_file method doesn't support offset, so we need custom logic
+        let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+        let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+        let (stdin_tx, stdin_rx) = mpsc::channel(8);
+        let path = path.to_owned();
+        let feeder_progress = progress.clone();
+        let feeder = tokio::spawn(async move {
+            stdin_tx.send(header).await.map_err(io::Error::other)?;
+            let result = async {
+                let mut file = tokio::fs::File::open(&path).await?;
+                if offset > 0 {
+                    tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(offset))
+                        .await?;
+                }
+                let mut buffer = vec![0_u8; 64 * 1024];
+                loop {
+                    let read = file.read(&mut buffer).await?;
+                    if read == 0 {
+                        break;
+                    }
+                    stdin_tx
+                        .send(buffer[..read].to_vec())
+                        .await
+                        .map_err(io::Error::other)?;
+                    feeder_progress.inc(read);
+                }
+                Ok::<_, io::Error>(())
+            }
+            .await;
+            let _ = stdin_tx.send(Vec::new()).await;
+            result
+        });
+        let execution = self.entry.client().execute_io(
+            &helper_command,
+            stdout_tx,
+            Some(stderr_tx),
+            Some(stdin_rx),
+            false,
+            None,
+        );
+        tokio::pin!(execution);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let status = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other)?,
+                Some(data) = stdout_rx.recv() => stdout.extend_from_slice(&data),
+                Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
+            }
+        };
+        feeder.await.map_err(io::Error::other)??;
+        while let Ok(data) = stdout_rx.try_recv() {
+            stdout.extend_from_slice(&data);
+        }
+        while let Ok(data) = stderr_rx.try_recv() {
+            stderr.extend_from_slice(&data);
+        }
+        progress.finish();
+        Ok((status, stdout, stderr))
     }
 
     pub async fn relay_tcp(
@@ -668,6 +798,7 @@ impl ExecHop {
             remote_port,
         )?;
         let mut request = request;
+        request.password = self.target_password.clone();
         request.remaining = self.remaining.clone();
         let header = encode_relay_header(&request)?;
         let helper_command =
@@ -735,13 +866,19 @@ mod tests {
     #[test]
     fn request_round_trip_preserves_binary_stdin() {
         let input = b"zero\0newline\nff\xff";
-        let request = ExecRequest::new(
+        let mut request = ExecRequest::new(
             "root@10.0.0.5".to_owned(),
             22,
             "printf '%s' safe".to_owned(),
             input.len() as u64,
         )
         .unwrap();
+        request.password = Some("target-password".into());
+        request.remaining.push(HopTarget {
+            target: "root@10.0.0.6".into(),
+            port: 22,
+            password: Some("next-password".into()),
+        });
         let encoded = encode_request(&request, input).unwrap();
         let (decoded, payload) = read_request(encoded.as_slice()).unwrap();
         assert_eq!(decoded, request);

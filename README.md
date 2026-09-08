@@ -69,7 +69,7 @@ and never invokes sudo. Override its defaults when needed:
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.4.0" \
+BINPORT_VERSION="v0.6.0" \
 sh install.sh
 ```
 
@@ -230,10 +230,12 @@ Passwordless authentication is ready for server-a
 $ binport server-a rg --version
 ```
 
-The password is used for that connection only and is never persisted. The
-private key is stored with restrictive permissions under the platform's
+For regular SSH hosts the password is not persisted; the dedicated private key
+is stored with restrictive permissions under the platform's
 binport configuration directory, separate from existing SSH keys. Installation
-is idempotent.
+is idempotent. Enterprise bastions that cannot use public-key authentication
+store a successfully verified password in Binport's persistent user store, so
+every terminal can reuse it automatically.
 
 ```sh
 binport auth status server-a
@@ -315,11 +317,13 @@ binport warm HOST|@GROUP          Preload every missing toolbox artifact
 binport plan HOST|@GROUP TOOL     Preview hosts, routes, and artifacts offline
 binport watch [OPTIONS] HOST TOOL Repeatedly report command-result changes
 binport cp SOURCE DESTINATION      Copy a file over native SSH (HOST:PATH)
+binport cp -r SOURCE DESTINATION   Copy a directory tree recursively
 binport rm HOST:PATH               Remove a remote file (`-r` for directories)
 binport exec HOST -- CMD [ARGS]... Execute a command already on the remote host
 binport run HOST SCRIPT [ARGS]...  Stream and execute a local shell script
 binport inspect HOST                Capture a read-only environment snapshot
 binport diff HOST-A HOST-B          Compare two remote environments
+binport profile HOST                Sample host and accelerator bottlenecks
 binport HOST TOOL [ARGUMENTS]...  Execute a tool remotely
 binport @GROUP TOOL [ARGUMENTS]... Execute concurrently across a fleet
 ```
@@ -354,6 +358,7 @@ binport inspect server-a
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
+binport profile server-a --duration 10 --interval 1
 ```
 
 The read-only probe compares system, resource, runtime, configuration, network,
@@ -362,6 +367,11 @@ NUMA, RDMA, shared memory, CPU acceleration features, and installed inference
 packages. It reads only a safe allowlist of tuning variables and never scans
 credentials. By default `diff` prints only changed fields; add `--all` to
 include equal values.
+
+`profile` adds a short, agentless performance window without root or eBPF. It
+summarizes average and peak CPU, memory, load, disk and network throughput, plus
+NVIDIA, Hygon, or Moore Threads accelerator utilization, memory, temperature, and power when
+available. `--json` produces a stable machine-readable report.
 
 Capacity fields use human-readable binary units in terminal output. JSON keeps
 the same display values and adds exact byte counts under `raw_values`. Ascend
@@ -382,6 +392,7 @@ binport server-a edit /etc/myapp/config.toml
 binport cp ./config.toml server-a:/tmp/config.toml
 binport cp server-a:/var/log/app.log ./app.log
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
+binport cp -r ./assets server-a:/tmp/
 binport rm server-a:/tmp/a.txt
 binport rm --recursive server-a:/tmp/old-output
 ```
