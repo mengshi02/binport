@@ -19,6 +19,8 @@ pub struct Destination {
     pub port: u16,
     pub user: String,
     pub identity: Option<PathBuf>,
+    /// Dedicated key created by `binport auth setup`, tried before SSH config keys.
+    pub managed_identity: Option<PathBuf>,
     pub proxy_jump: Option<String>,
     pub bastion_proxy: Option<BastionProxy>,
 }
@@ -81,6 +83,7 @@ impl Destination {
                 .or_else(|| env::var("USERNAME").ok())
                 .unwrap_or_else(|| "root".into()),
             identity: None,
+            managed_identity: None,
             proxy_jump: None,
             bastion_proxy: None,
         };
@@ -92,11 +95,9 @@ impl Destination {
             if let Ok(source) = fs::read_to_string(ssh_dir.join(crate::host::MANAGED_CONFIG_NAME)) {
                 apply_ssh_config(&source, alias, requested_user.is_none(), &mut destination);
             }
-            if destination.identity.is_none() {
-                let managed = crate::auth::managed_key_path(value)?;
-                if managed.is_file() {
-                    destination.identity = Some(managed);
-                }
+            let managed = crate::auth::managed_key_path(value)?;
+            if managed.is_file() {
+                destination.managed_identity = Some(managed);
             }
             if destination.identity.is_none() {
                 for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
@@ -161,6 +162,23 @@ fn select_hosts_from_config(source: &str, group: &str) -> Vec<String> {
 }
 
 impl NativeSsh {
+    /// Connect without consulting the local known_hosts file. This is used by
+    /// binport-hop inside an already authenticated private route, where the
+    /// intermediate host has no interactive way to accept a first-seen key.
+    pub async fn connect_private_route(
+        destination: &Destination,
+        password: Option<&str>,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            client: connect_direct_checked(destination, password, ServerCheckMethod::NoCheck)
+                .await?,
+            _jump: None,
+            bastion: None,
+            destination: Some(destination.clone()),
+            password: password.map(str::to_owned),
+        })
+    }
+
     pub async fn connect_jump(alias: &str, password: Option<&str>) -> io::Result<SharedJump> {
         let destination = Destination::resolve(alias)?;
         Self::connect_jump_destination(&destination, password).await
@@ -374,9 +392,14 @@ impl NativeSsh {
             }
             Ok::<_, io::Error>(())
         });
+        // async-ssh2-tokio requests a PTY with an empty terminal-mode list.
+        // Some SSH servers consequently create it with ECHO disabled. Since the
+        // local terminal is in raw mode, that makes interactive input invisible.
+        let (columns, rows) = terminal_size();
+        let command = tty_command(command, columns, rows);
         let execution =
             self.client
-                .execute_io(command, output_tx, None, Some(input_rx), true, None);
+                .execute_io(&command, output_tx, None, Some(input_rx), true, None);
         tokio::pin!(execution);
         let mut stdout = io::stdout();
         let result = loop {
@@ -700,6 +723,108 @@ impl NativeSsh {
         Ok((status, stderr))
     }
 
+    pub async fn download_file_append(
+        &self,
+        command: &str,
+        path: &Path,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>)> {
+        let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+        let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+        let execution =
+            self.client
+                .execute_io(command, stdout_tx, Some(stderr_tx), None, false, None);
+        tokio::pin!(execution);
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        let mut stderr = Vec::new();
+        let status = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other)?,
+                Some(data) = stdout_rx.recv() => {
+                    file.write_all(&data).await?;
+                    progress.inc(data.len());
+                },
+                Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
+            }
+        };
+        while let Ok(data) = stdout_rx.try_recv() {
+            file.write_all(&data).await?;
+            progress.inc(data.len());
+        }
+        while let Ok(data) = stderr_rx.try_recv() {
+            stderr.extend_from_slice(&data);
+        }
+        file.flush().await?;
+        progress.finish();
+        Ok((status, stderr))
+    }
+
+    pub async fn upload_file_from_offset(
+        &self,
+        command: &str,
+        path: &Path,
+        offset: u64,
+        progress: TransferProgress,
+    ) -> io::Result<(u32, Vec<u8>)> {
+        let (stdout_tx, mut stdout_rx) = mpsc::channel(8);
+        let (stderr_tx, mut stderr_rx) = mpsc::channel(8);
+        let (stdin_tx, stdin_rx) = mpsc::channel(4);
+        let path = path.to_owned();
+        let feeder_progress = progress.clone();
+        let feeder = tokio::spawn(async move {
+            let result = async {
+                let mut file = tokio::fs::File::open(&path).await?;
+                if offset > 0 {
+                    tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(offset))
+                        .await?;
+                }
+                let mut buffer = vec![0_u8; 64 * 1024];
+                loop {
+                    let read = file.read(&mut buffer).await?;
+                    if read == 0 {
+                        break;
+                    }
+                    stdin_tx
+                        .send(buffer[..read].to_vec())
+                        .await
+                        .map_err(io::Error::other)?;
+                    feeder_progress.inc(read);
+                }
+                Ok::<(), io::Error>(())
+            }
+            .await;
+            let _ = stdin_tx.send(Vec::new()).await;
+            result
+        });
+        let execution = self.client.execute_io(
+            command,
+            stdout_tx,
+            Some(stderr_tx),
+            Some(stdin_rx),
+            false,
+            None,
+        );
+        tokio::pin!(execution);
+        let mut stderr = Vec::new();
+        let status = loop {
+            tokio::select! {
+                result = &mut execution => break result.map_err(io::Error::other)?,
+                Some(_) = stdout_rx.recv() => {},
+                Some(data) = stderr_rx.recv() => stderr.extend_from_slice(&data),
+            }
+        };
+        feeder.await.map_err(io::Error::other)??;
+        while let Ok(data) = stderr_rx.try_recv() {
+            stderr.extend_from_slice(&data);
+        }
+        progress.finish();
+        Ok((status, stderr))
+    }
+
     /// Execute a command on a fresh connection if this is a bastion proxy.
     /// Bastion hosts only support one exec channel per connection.
     pub async fn execute_capture_fresh(&self, command: &str) -> io::Result<(u32, String, String)> {
@@ -772,6 +897,18 @@ impl NativeSsh {
     }
 }
 
+pub(crate) fn terminal_size() -> (u16, u16) {
+    crossterm::terminal::size().unwrap_or((80, 24))
+}
+
+pub(crate) fn tty_command(command: &str, columns: u16, rows: u16) -> String {
+    format!(
+        "stty echo rows {} cols {} 2>/dev/null; exec {command}",
+        rows.max(1),
+        columns.max(1)
+    )
+}
+
 struct RawModeGuard;
 
 impl Drop for RawModeGuard {
@@ -781,13 +918,26 @@ impl Drop for RawModeGuard {
 }
 
 async fn connect_direct(destination: &Destination, password: Option<&str>) -> io::Result<Client> {
+    connect_direct_checked(
+        destination,
+        password,
+        ServerCheckMethod::DefaultKnownHostsFile,
+    )
+    .await
+}
+
+async fn connect_direct_checked(
+    destination: &Destination,
+    password: Option<&str>,
+    server_check: ServerCheckMethod,
+) -> io::Result<Client> {
     let mut last_error = None;
     for auth in auth_methods(destination, password)? {
         match Client::connect(
             (destination.hostname.as_str(), destination.port),
             &destination.user,
             auth,
-            ServerCheckMethod::DefaultKnownHostsFile,
+            server_check.clone(),
         )
         .await
         {
@@ -798,15 +948,21 @@ async fn connect_direct(destination: &Destination, password: Option<&str>) -> io
     Err(io::Error::other(last_error.expect("auth candidates")))
 }
 
-fn bastion_password_for_host(host: &str) -> Option<String> {
+fn bastion_password(bastion: &BastionProxy) -> io::Result<(Option<String>, bool)> {
     // Try per-host env var first: BINPORT_BASTION_PASSWORD_10_121_61_3
-    let suffix = bastion_env_suffix(host);
+    let suffix = bastion_env_suffix(&bastion.host);
     let host_key = format!("BINPORT_BASTION_PASSWORD_{suffix}");
     if let Ok(password) = env::var(&host_key) {
-        return Some(password);
+        return Ok((Some(password), true));
     }
     // Fall back to generic env var: BINPORT_BASTION_PASSWORD
-    env::var("BINPORT_BASTION_PASSWORD").ok()
+    if let Ok(password) = env::var("BINPORT_BASTION_PASSWORD") {
+        return Ok((Some(password), true));
+    }
+    Ok((
+        crate::auth::read_bastion_password(&bastion.host, bastion.port, &bastion.user)?,
+        false,
+    ))
 }
 
 async fn connect_bastion(
@@ -815,30 +971,37 @@ async fn connect_bastion(
     password: Option<&str>,
 ) -> io::Result<Client> {
     let composite_user = bastion.format_username(target_host);
-    let auth = if let Some(password) = password {
+    let (resolved_password, persist) = if let Some(password) = password {
+        (Some(password.to_owned()), true)
+    } else {
+        bastion_password(bastion)?
+    };
+    let auth = if let Some(password) = resolved_password.as_deref() {
         AuthMethod::with_password(password)
-    } else if let Some(password) = bastion_password_for_host(&bastion.host) {
-        AuthMethod::with_password(&password)
     } else if let Some(auth) = agent_auth_method() {
         auth
     } else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "bastion proxy requires SSH Agent or password authentication for {}; use --password, set BINPORT_BASTION_PASSWORD_{}, or set BINPORT_BASTION_PASSWORD",
+                "bastion proxy requires authentication for {}; run `binport auth setup HOST`, use --password, or set BINPORT_BASTION_PASSWORD_{}",
                 bastion.host,
                 bastion_env_suffix(&bastion.host)
             ),
         ));
     };
-    Client::connect(
+    let client = Client::connect(
         (bastion.host.as_str(), bastion.port),
         &composite_user,
         auth,
         ServerCheckMethod::DefaultKnownHostsFile,
     )
     .await
-    .map_err(io::Error::other)
+    .map_err(io::Error::other)?;
+    if persist && let Some(password) = resolved_password.as_deref() {
+        crate::auth::save_bastion_password(&bastion.host, bastion.port, &bastion.user, password)?;
+    }
+    Ok(client)
 }
 
 #[cfg(unix)]
@@ -870,7 +1033,11 @@ fn auth_method(destination: &Destination, password: Option<&str>) -> io::Result<
         return Ok(AuthMethod::with_password(password));
     }
     #[cfg(unix)]
-    let auth = if let Some(identity) = &destination.identity {
+    let auth = if let Some(identity) = destination
+        .managed_identity
+        .as_ref()
+        .or(destination.identity.as_ref())
+    {
         AuthMethod::with_key_file(identity, None)
     } else if env::var_os("SSH_AUTH_SOCK").is_some() {
         AuthMethod::with_agent()
@@ -893,19 +1060,7 @@ fn auth_methods(destination: &Destination, password: Option<&str>) -> io::Result
     if password.is_some() {
         return Ok(vec![auth_method(destination, password)?]);
     }
-    let mut paths = Vec::new();
-    if let Some(identity) = &destination.identity {
-        paths.push(identity.clone());
-    }
-    if let Some(home) = user_home() {
-        let ssh_dir = home.join(".ssh");
-        for name in ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"] {
-            let path = ssh_dir.join(name);
-            if path.is_file() && !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
-    }
+    let paths = identity_paths(destination);
     let mut methods = paths
         .into_iter()
         .map(|path| AuthMethod::with_key_file(path, None))
@@ -920,6 +1075,28 @@ fn auth_methods(destination: &Destination, password: Option<&str>) -> io::Result
         ));
     }
     Ok(methods)
+}
+
+fn identity_paths(destination: &Destination) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(identity) = &destination.managed_identity {
+        paths.push(identity.clone());
+    }
+    if let Some(identity) = &destination.identity
+        && !paths.contains(identity)
+    {
+        paths.push(identity.clone());
+    }
+    if let Some(home) = user_home() {
+        let ssh_dir = home.join(".ssh");
+        for name in ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"] {
+            let path = ssh_dir.join(name);
+            if path.is_file() && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
 }
 
 fn apply_ssh_config(source: &str, alias: &str, allow_user: bool, destination: &mut Destination) {
@@ -1033,6 +1210,7 @@ mod tests {
             port: 22,
             user: "me".into(),
             identity: None,
+            managed_identity: None,
             proxy_jump: None,
             bastion_proxy: None,
         }
@@ -1050,6 +1228,16 @@ mod tests {
         assert_eq!(dest.hostname, "192.0.2.8");
         assert_eq!(dest.user, "deploy");
         assert_eq!(dest.port, 2202);
+    }
+
+    #[test]
+    fn managed_key_is_tried_before_ssh_config_identity() {
+        let mut dest = destination();
+        dest.managed_identity = Some(PathBuf::from("/binport/managed"));
+        dest.identity = Some(PathBuf::from("/ssh/configured"));
+        let paths = identity_paths(&dest);
+        assert_eq!(paths[0], PathBuf::from("/binport/managed"));
+        assert_eq!(paths[1], PathBuf::from("/ssh/configured"));
     }
 
     #[test]

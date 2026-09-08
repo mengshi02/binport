@@ -290,14 +290,19 @@ fn authentication_hint(host: &str, error: io::Error) -> io::Error {
                 ),
             );
         }
-        let auth_host = managed
+        let exec_hop_entry = managed
             .filter(|entry| entry.strategy.as_deref() == Some("exec-hop"))
-            .and_then(|entry| entry.proxy_jump)
-            .unwrap_or_else(|| host.to_owned());
+            .and_then(|entry| entry.proxy_jump);
+        let auth_host = exec_hop_entry.as_deref().unwrap_or(host);
+        let location = if exec_hop_entry.is_some() {
+            "at entry host"
+        } else {
+            "for host"
+        };
         io::Error::new(
             error.kind(),
             format!(
-                "{message}; authentication failed at entry host {auth_host:?}; run `binport auth setup {auth_host}` for passwordless access or retry with `binport --password {host} ...`"
+                "{message}; authentication failed {location} {auth_host:?}; run `binport auth setup {auth_host}` for passwordless access or retry with `binport --password {host} ...`"
             ),
         )
     } else {

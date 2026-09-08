@@ -1,10 +1,83 @@
 use binport::catalog::Platform;
+use binport::hop::ExecHop;
+use binport::ssh::{Destination, NativeSsh};
 use binport::toolbox;
 use binport::{remote_paths, safe_tool_name, sha256_file};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct RemoteFile<'a> {
+    pub host: &'a str,
+    pub path: &'a str,
+}
+
+pub fn parse_remote_file(value: &str) -> io::Result<Option<RemoteFile<'_>>> {
+    let Some((host, path)) = value.split_once(':') else {
+        return Ok(None);
+    };
+    if host.len() == 1 && host.as_bytes()[0].is_ascii_alphabetic() {
+        return Ok(None);
+    }
+    if host.is_empty() || path.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "remote paths use HOST:PATH with a non-empty host and path",
+        ));
+    }
+    Ok(Some(RemoteFile { host, path }))
+}
+
+pub async fn connect_host(host: &str, password: Option<&str>) -> io::Result<NativeSsh> {
+    if let Some((bastion_alias, target_alias)) = ad_hoc_bastion(host)? {
+        let bastion_dest = Destination::resolve(bastion_alias)?;
+        let mut target_dest = Destination::resolve(target_alias)?;
+        apply_ad_hoc_bastion(&mut target_dest, &bastion_dest)?;
+        return NativeSsh::connect(&target_dest, password).await;
+    }
+    if let Some((jump_host, target_host)) = ad_hoc_route(host)? {
+        let jump = NativeSsh::connect_jump(jump_host, password).await?;
+        let destination = Destination::resolve(target_host)?;
+        return NativeSsh::connect_with_jump(&destination, password, &jump).await;
+    }
+    NativeSsh::connect(&Destination::resolve(host)?, password).await
+}
+
+pub async fn connect_exec_hop(
+    host: &str,
+    password: Option<&str>,
+    show_progress: bool,
+) -> io::Result<Option<ExecHop>> {
+    let Some(entry) = binport::host::find(host)? else {
+        return Ok(None);
+    };
+    if entry.strategy.as_deref() != Some("exec-hop") {
+        return Ok(None);
+    }
+    ExecHop::connect_host(&entry, password, show_progress)
+        .await
+        .map(Some)
+}
+
+pub fn apply_ad_hoc_bastion(target: &mut Destination, bastion: &Destination) -> io::Result<()> {
+    if target.proxy_jump.is_some() || target.bastion_proxy.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target already has a proxy configured; ad-hoc bastion route is not applicable",
+        ));
+    }
+    target.bastion_proxy = Some(binport::ssh::BastionProxy {
+        host: bastion.hostname.clone(),
+        port: bastion.port,
+        user: bastion.user.clone(),
+        account: target.user.clone(),
+        preset: None,
+        format: "{user}/{host}/{account}".into(),
+    });
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub struct ToolCandidate {

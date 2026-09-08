@@ -236,8 +236,8 @@ binport host remove prod-db
 binport --password server-a rg --version
 ```
 
-密码只保存在当前进程内存中。希望以后免输密码时，安装一把与现有 Key 隔离的
-Binport 专用 Ed25519 Key：
+普通 SSH 主机通过 Binport 专用 Ed25519 Key 实现长期免密；企业堡垒机首次
+密码连接成功后会写入 Binport 用户凭证目录，后续终端自动复用：
 
 ```sh
 binport auth setup server-a
@@ -362,6 +362,10 @@ binport cp server-a:/var/log/app.log ./app.log
 
 # 远端 -> 远端；数据经过本地流式中转
 binport cp server-a:/tmp/a.txt server-b:/tmp/a.txt
+
+# 递归复制目录（目标以 / 结尾时自动追加源目录名）
+binport cp -r ./assets server-a:/tmp/
+binport cp -r server-a:/var/log/app ./app-backup
 
 # 删除文件、目录
 binport rm server-a:/tmp/a.txt
@@ -587,6 +591,7 @@ binport build .
 | `binport HOST TOOL [ARGS]...` | 单机执行 |
 | `binport @GROUP TOOL [ARGS]...` | Fleet 并发执行 |
 | `binport cp SOURCE DEST` | 本地/远端文件复制 |
+| `binport cp -r SOURCE DEST` | 本地/远端目录递归复制 |
 | `binport rm [-rf] HOST:PATH` | 删除远端文件或目录 |
 | `binport tunnel SPEC... HOST` | 转发一个或多个 TCP 端口 |
 | `binport plan TARGET TOOL` | 离线预览执行计划 |
@@ -595,6 +600,7 @@ binport build .
 | `binport watch ...` | 持续观察命令结果变化 |
 | `binport inspect HOST` | 采集远端只读环境快照 |
 | `binport diff A B` | 对比系统、资源、网络、GPU/NPU、CUDA/ROCm/MUSA 与 AI 运行时环境 |
+| `binport profile HOST --duration 10` | 无 Agent 采样 CPU、内存、I/O、网络与 NVIDIA/海光/摩尔线程加速器瓶颈 |
 | `binport export/load FILE` | 单文件离线分发 |
 | `binport pack/unpack FILE` | OCI layout 离线分发 |
 | `binport push/pull oci://...` | Registry/Harbor 分发 |

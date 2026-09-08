@@ -51,7 +51,7 @@ async fn run_exec() -> io::Result<u32> {
             "binport-hop target must be directly reachable from the entry host",
         ));
     }
-    let ssh = NativeSsh::connect(&destination, None).await?;
+    let ssh = NativeSsh::connect_private_route(&destination, request.password.as_deref()).await?;
     if !request.remaining.is_empty() {
         return run_nested_exec(ssh, request, stdin).await;
     }
@@ -103,8 +103,14 @@ async fn run_exec() -> io::Result<u32> {
     let status = loop {
         tokio::select! {
             result = &mut execution => break result.map_err(io::Error::other)?,
-            Some(data) = stdout_rx.recv() => stdout.write_all(&data).await?,
-            Some(data) = stderr_rx.recv() => stderr.write_all(&data).await?,
+            Some(data) = stdout_rx.recv() => {
+                stdout.write_all(&data).await?;
+                stdout.flush().await?;
+            },
+            Some(data) = stderr_rx.recv() => {
+                stderr.write_all(&data).await?;
+                stderr.flush().await?;
+            },
         }
     };
     feeder.await.map_err(io::Error::other)??;
@@ -128,6 +134,7 @@ async fn run_nested_exec(
     let next = request.remaining.remove(0);
     request.target = next.target;
     request.target_port = next.port;
+    request.password = next.password;
     let header = hop::encode_request_header(&request)?;
     let command = binport::execute_command(&helper, &[] as &[OsString])?;
     relay_process(ssh, command, header, stdin).await
@@ -228,8 +235,14 @@ async fn relay_process(
     let status = loop {
         tokio::select! {
             result = &mut execution => break result.map_err(io::Error::other)?,
-            Some(data) = stdout_rx.recv() => stdout.write_all(&data).await?,
-            Some(data) = stderr_rx.recv() => stderr.write_all(&data).await?,
+            Some(data) = stdout_rx.recv() => {
+                stdout.write_all(&data).await?;
+                stdout.flush().await?;
+            },
+            Some(data) = stderr_rx.recv() => {
+                stderr.write_all(&data).await?;
+                stderr.flush().await?;
+            },
         }
     };
     feeder.abort();
@@ -294,12 +307,13 @@ async fn run_relay() -> io::Result<u32> {
             "binport-hop relay target must be directly reachable from the entry host",
         ));
     }
-    let ssh = NativeSsh::connect(&destination, None).await?;
+    let ssh = NativeSsh::connect_private_route(&destination, request.password.as_deref()).await?;
     if !request.remaining.is_empty() {
         let helper = install_self(&ssh).await?;
         let next = request.remaining.remove(0);
         request.target = next.target;
         request.target_port = next.port;
+        request.password = next.password;
         let header = hop::encode_relay_header(&request)?;
         let command = binport::execute_command(&helper, &[OsString::from("--relay")])?;
         return relay_process(ssh, command, header, stdin).await;

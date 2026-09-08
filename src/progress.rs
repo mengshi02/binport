@@ -14,6 +14,41 @@ pub struct TransferProgress {
     bar: ProgressBar,
 }
 
+#[derive(Clone)]
+pub struct TaskProgress {
+    bar: ProgressBar,
+}
+
+impl TaskProgress {
+    pub fn new(label: impl Into<String>, enabled: bool) -> Self {
+        let visible = enabled
+            && ENABLED.load(Ordering::Relaxed)
+            && io::stderr().is_terminal()
+            && io::stdout().is_terminal();
+        let bar = if visible {
+            let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+            bar.set_style(
+                ProgressStyle::with_template("{spinner:.cyan} {msg}  {elapsed_precise}")
+                    .expect("valid task progress template"),
+            );
+            bar
+        } else {
+            ProgressBar::hidden()
+        };
+        bar.set_message(label.into());
+        bar.enable_steady_tick(Duration::from_millis(100));
+        Self { bar }
+    }
+
+    pub fn set_message(&self, message: impl Into<String>) {
+        self.bar.set_message(message.into());
+    }
+
+    pub fn finish(&self) {
+        self.bar.finish_and_clear();
+    }
+}
+
 impl TransferProgress {
     pub fn new(label: impl Into<String>, total: Option<u64>, enabled: bool) -> Self {
         let visible = enabled && ENABLED.load(Ordering::Relaxed) && io::stderr().is_terminal();

@@ -42,11 +42,19 @@ pub fn run(args: AuthArgs, json: bool) -> io::Result<u8> {
 }
 
 fn setup(host: &str, json: bool) -> io::Result<u8> {
+    if let Some(entry) = binport::host::find(host)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        return setup_exec_hop(host, &entry, json);
+    }
     let mut destination = Destination::resolve(host)?;
+    if destination.bastion_proxy.is_some() {
+        return setup_bastion(host, &destination, json);
+    }
     let key = binport::auth::ensure_managed_key(host)?;
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     if !key.created {
-        destination.identity = Some(key.private_path.clone());
+        destination.managed_identity = Some(key.private_path.clone());
         if managed_key_works(&runtime, &destination) {
             return print_ready(host, &key, "existing", json);
         }
@@ -66,7 +74,7 @@ fn setup(host: &str, json: bool) -> io::Result<u8> {
                 String::from_utf8_lossy(&stderr).trim()
             )));
         }
-        destination.identity = Some(key.private_path.clone());
+        destination.managed_identity = Some(key.private_path.clone());
         let verification = NativeSsh::connect(&destination, None).await?;
         let (status, _, stderr) = verification.execute_capture("true").await?;
         if status != 0 {
@@ -78,6 +86,78 @@ fn setup(host: &str, json: bool) -> io::Result<u8> {
         Ok::<_, io::Error>(String::from_utf8_lossy(&stdout).trim().to_owned())
     })?;
     print_ready(host, &key, &remote_state, json)
+}
+
+fn setup_exec_hop(host: &str, entry: &binport::host::HostEntry, json: bool) -> io::Result<u8> {
+    let password = rpassword::prompt_password("Target SSH password: ")?;
+    binport::auth::save_route_password(host, &password)?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    let result = runtime.block_on(async {
+        let hop = binport::hop::ExecHop::connect_host(entry, None, !json).await?;
+        let (status, _, stderr) = hop
+            .execute_capture_with_input("true".to_owned(), Vec::new())
+            .await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "target credential verification failed: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            )));
+        }
+        Ok::<_, io::Error>(())
+    });
+    if let Err(error) = result {
+        let _ = binport::auth::remove_route_password(host);
+        return Err(error);
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "host": host, "ready": true, "credential_store": "binport", "route": "exec-hop"
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("Passwordless use is ready for {host}");
+        println!("Credential: persistent Binport store");
+    }
+    Ok(0)
+}
+
+fn setup_bastion(host: &str, destination: &Destination, json: bool) -> io::Result<u8> {
+    let bastion = destination.bastion_proxy.as_ref().expect("checked above");
+    let password = rpassword::prompt_password("Bastion password: ")?;
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+    runtime.block_on(async {
+        let ssh = NativeSsh::connect(destination, Some(&password)).await?;
+        let (status, _, stderr) = ssh.execute_capture("true").await?;
+        if status != 0 {
+            return Err(io::Error::other(format!(
+                "bastion credential verification failed: {}",
+                stderr.trim()
+            )));
+        }
+        Ok::<_, io::Error>(())
+    })?;
+    binport::auth::save_bastion_password(&bastion.host, bastion.port, &bastion.user, &password)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "host": host,
+                "ready": true,
+                "credential_store": "binport",
+                "bastion": bastion.host,
+            }))
+            .map_err(io::Error::other)?
+        );
+    } else {
+        println!("Bastion authentication is ready for {host}");
+        println!("Credential: persistent Binport store");
+        println!();
+        println!("  binport exec {host} true");
+    }
+    Ok(0)
 }
 
 fn print_ready(
@@ -118,9 +198,45 @@ fn managed_key_works(runtime: &tokio::runtime::Runtime, destination: &Destinatio
 }
 
 fn status(host: &str, json: bool) -> io::Result<u8> {
+    if let Some(entry) = binport::host::find(host)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        let ready = binport::auth::read_route_password(host)?.is_some();
+        if json {
+            println!(
+                "{{\"host\":{},\"ready\":{ready},\"credential_store\":\"binport\"}}",
+                serde_json::to_string(host).unwrap()
+            );
+        } else if ready {
+            println!("{host}: ready (persistent Binport store)");
+        } else {
+            println!("{host}: no stored target credential");
+        }
+        return Ok(if ready { 0 } else { 1 });
+    }
+    let destination = Destination::resolve(host)?;
+    if let Some(bastion) = destination.bastion_proxy.as_ref() {
+        let ready =
+            binport::auth::read_bastion_password(&bastion.host, bastion.port, &bastion.user)?
+                .is_some();
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "host": host, "ready": ready, "credential_store": "binport"
+                }))
+                .map_err(io::Error::other)?
+            );
+        } else if ready {
+            println!("{host}: ready (persistent Binport store)");
+        } else {
+            println!("{host}: no stored bastion credential");
+        }
+        return Ok(if ready { 0 } else { 1 });
+    }
     let (private_path, _) = binport::auth::read_managed_public_key(host)?;
     let mut destination = Destination::resolve(host)?;
-    destination.identity = Some(private_path.clone());
+    destination.managed_identity = Some(private_path.clone());
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     let ready = managed_key_works(&runtime, &destination);
     if json {
@@ -142,13 +258,54 @@ fn status(host: &str, json: bool) -> io::Result<u8> {
 }
 
 fn remove(host: &str, yes: bool, json: bool) -> io::Result<u8> {
+    if let Some(entry) = binport::host::find(host)?
+        && entry.strategy.as_deref() == Some("exec-hop")
+    {
+        if !yes && !confirm_removal(host)? {
+            println!("Cancelled");
+            return Ok(0);
+        }
+        let removed = binport::auth::remove_route_password(host)?;
+        if json {
+            println!(
+                "{{\"host\":{},\"removed\":{removed}}}",
+                serde_json::to_string(host).unwrap()
+            );
+        } else {
+            println!(
+                "{} target credential for {host}",
+                if removed { "Removed" } else { "No stored" }
+            );
+        }
+        return Ok(0);
+    }
+    let destination = Destination::resolve(host)?;
+    if let Some(bastion) = destination.bastion_proxy.as_ref() {
+        if !yes && !confirm_removal(host)? {
+            println!("Cancelled");
+            return Ok(0);
+        }
+        let removed =
+            binport::auth::remove_bastion_password(&bastion.host, bastion.port, &bastion.user)?;
+        if json {
+            println!(
+                "{{\"host\":{},\"removed\":{removed}}}",
+                serde_json::to_string(host).unwrap()
+            );
+        } else if removed {
+            println!("Removed stored bastion credential for {host}");
+        } else {
+            println!("No stored bastion credential for {host}");
+        }
+        return Ok(0);
+    }
     let (private_path, public_key) = binport::auth::read_managed_public_key(host)?;
     if !yes && !confirm_removal(host)? {
         println!("Cancelled");
         return Ok(0);
     }
     let mut destination = Destination::resolve(host)?;
-    destination.identity = Some(private_path);
+    destination.managed_identity = Some(private_path);
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
     runtime.block_on(async {
         let ssh = NativeSsh::connect(&destination, None).await?;
