@@ -355,6 +355,7 @@ jump and exec-hop routes:
 
 ```sh
 binport inspect server-a
+binport inspect server-a --peer server-b
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -367,6 +368,12 @@ NUMA, RDMA, shared memory, CPU acceleration features, and installed inference
 packages. It reads only a safe allowlist of tuning variables and never scans
 credentials. By default `diff` prints only changed fields; add `--all` to
 include equal values.
+
+For distributed training and inference, `inspect --peer` actively tests the path from one
+node to another. It reports DNS resolution, route/interface/source address, TCP and ICMP
+reachability, packet loss, min/average/max latency and jitter, MTU, NIC link speed, and
+RDMA device/active-port readiness. The probe is read-only and does not generate bulk
+traffic; it explicitly reports when throughput has not been measured.
 
 `profile` adds a short, agentless performance window without root or eBPF. It
 summarizes average and peak CPU, memory, load, disk and network throughput, plus

@@ -117,6 +117,12 @@ emit_if ai_runtime.collective_libraries "$(ldconfig -p 2>/dev/null | awk '/lib(n
 pub struct InspectArgs {
     /// SSH host configured in binport or ~/.ssh/config
     target: String,
+    /// Probe connectivity from this host to another configured host
+    #[arg(long)]
+    peer: Option<String>,
+    /// ICMP samples used by --peer
+    #[arg(long, default_value_t = 4, requires = "peer")]
+    samples: u8,
     /// Only show these comma-separated sections
     #[arg(long, value_delimiter = ',')]
     section: Vec<String>,
@@ -152,21 +158,46 @@ struct Difference {
     equal: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct PeerReport {
+    source: String,
+    peer: String,
+    address: String,
+    port: u16,
+    status: String,
+    metrics: BTreeMap<String, String>,
+    observations: Vec<String>,
+}
+
 pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<u8> {
     let password = prompt_password(use_password)?;
     let progress = binport::progress::TaskProgress::new(
         format!("Inspecting {} · connecting and collecting", args.target),
         !json,
     );
-    let result = runtime()?.block_on(collect(&args.target, password.as_deref()));
+    let result = runtime()?.block_on(async {
+        let snapshot = collect(&args.target, password.as_deref()).await?;
+        let peer = match args.peer.as_deref() {
+            Some(peer) => {
+                Some(probe_peer(&args.target, peer, args.samples, password.as_deref()).await?)
+            }
+            None => None,
+        };
+        Ok::<_, io::Error>((snapshot, peer))
+    });
     progress.finish();
-    let snapshot = result?;
+    let (snapshot, peer) = result?;
     let snapshot = filter(snapshot, &args.section);
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&snapshot).map_err(io::Error::other)?
-        );
+        let output = if let Some(peer) = peer {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "environment": snapshot,
+                "peer_connectivity": peer,
+            }))
+        } else {
+            serde_json::to_string_pretty(&snapshot)
+        };
+        println!("{}", output.map_err(io::Error::other)?);
     } else {
         let color = colors_enabled();
         println!(
@@ -175,8 +206,215 @@ pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<
             paint(color, "1", &snapshot.host)
         );
         print!("{}", snapshot_table(&snapshot, color));
+        if let Some(peer) = peer {
+            print_peer_report(&peer, color);
+        }
     }
     Ok(0)
+}
+
+async fn probe_peer(
+    source: &str,
+    peer: &str,
+    samples: u8,
+    password: Option<&str>,
+) -> io::Result<PeerReport> {
+    if samples == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--samples must be greater than zero",
+        ));
+    }
+    let destination = binport::ssh::Destination::resolve(peer)?;
+    let command = binport::execute_command(
+        "sh",
+        &[
+            "-c".into(),
+            PEER_PROBE.into(),
+            "binport-peer-probe".into(),
+            destination.hostname.clone().into(),
+            destination.port.to_string().into(),
+            samples.to_string().into(),
+        ],
+    )?;
+    let (status, stdout, stderr) = capture_remote(source, command, password).await?;
+    if status != 0 {
+        return Err(io::Error::other(format!(
+            "peer probe failed on {source}: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        )));
+    }
+    Ok(parse_peer_report(
+        source,
+        peer,
+        &destination.hostname,
+        destination.port,
+        &String::from_utf8_lossy(&stdout),
+    ))
+}
+
+const PEER_PROBE: &str = r#"
+peer=$1; port=$2; samples=$3
+emit() { printf '%s\t%s\n' "$1" "$2"; }
+resolved=$(getent ahostsv4 "$peer" 2>/dev/null | awk 'NR==1 {print $1}')
+[ -z "$resolved" ] && resolved=$(getent hosts "$peer" 2>/dev/null | awk 'NR==1 {print $1}')
+emit resolved "${resolved:-unavailable}"
+route=$(ip route get "$peer" 2>/dev/null | head -n 1)
+emit interface "$(printf '%s\n' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')"
+emit source_ip "$(printf '%s\n' "$route" | sed -n 's/.* src \([^ ]*\).*/\1/p')"
+printf '%s\n' "$route" | grep -q ' via ' && emit route_type routed || emit route_type direct
+iface=$(printf '%s\n' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+[ -n "$iface" ] && emit mtu "$(cat "/sys/class/net/$iface/mtu" 2>/dev/null)"
+[ -n "$iface" ] && emit link_speed_mbps "$(cat "/sys/class/net/$iface/speed" 2>/dev/null)"
+[ -n "$iface" ] && emit interface_numa_node "$(cat "/sys/class/net/$iface/device/numa_node" 2>/dev/null)"
+[ -n "$iface" ] && emit bond_slaves "$(cat "/sys/class/net/$iface/bonding/slaves" 2>/dev/null)"
+if command -v ping >/dev/null 2>&1; then
+  ping_out=$(LC_ALL=C ping -n -c "$samples" -W 2 "$peer" 2>/dev/null || true)
+  emit packet_loss_pct "$(printf '%s\n' "$ping_out" | sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' | tail -n 1)"
+  rtt=$(printf '%s\n' "$ping_out" | awk -F'= ' '/min\/avg\/max/ {print $2}' | awk '{print $1}')
+  emit latency_min_ms "$(printf '%s' "$rtt" | cut -d/ -f1)"
+  emit latency_avg_ms "$(printf '%s' "$rtt" | cut -d/ -f2)"
+  emit latency_max_ms "$(printf '%s' "$rtt" | cut -d/ -f3)"
+  emit latency_jitter_ms "$(printf '%s' "$rtt" | cut -d/ -f4)"
+else
+  emit packet_loss_pct unavailable
+fi
+if command -v python3 >/dev/null 2>&1; then
+  tcp=$(python3 -c 'import socket,sys,time; s=socket.socket(); s.settimeout(3); t=time.monotonic(); r=s.connect_ex((sys.argv[1],int(sys.argv[2]))); print(("ok" if r==0 else "failed")+" "+str(round((time.monotonic()-t)*1000,2))); s.close()' "$peer" "$port" 2>/dev/null)
+  emit tcp "$(printf '%s' "$tcp" | awk '{print $1}')"
+  emit tcp_connect_ms "$(printf '%s' "$tcp" | awk '{print $2}')"
+elif command -v nc >/dev/null 2>&1; then
+  nc -z -w 3 "$peer" "$port" >/dev/null 2>&1 && emit tcp ok || emit tcp failed
+else
+  emit tcp unavailable
+fi
+emit rdma_devices "$(find /sys/class/infiniband -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+emit rdma_active_ports "$(for p in /sys/class/infiniband/*/ports/*/state; do [ -r "$p" ] && grep -q 'ACTIVE' "$p" && echo x; done | wc -l | tr -d ' ')"
+emit rdma_link_layers "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
+emit rdma_rates "$(for p in /sys/class/infiniband/*/ports/*/rate; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
+emit rdma_active_mtu "$(for p in /sys/class/infiniband/*/ports/*/active_mtu; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
+command -v ibv_devinfo >/dev/null 2>&1 && emit rdma_tooling available || emit rdma_tooling unavailable
+command -v iperf3 >/dev/null 2>&1 && emit bandwidth_tooling iperf3 || emit bandwidth_tooling unavailable
+"#;
+
+fn parse_peer_report(
+    source: &str,
+    peer: &str,
+    address: &str,
+    port: u16,
+    output: &str,
+) -> PeerReport {
+    let metrics = output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(key, value)| {
+            (
+                key.to_owned(),
+                if value.is_empty() {
+                    "unavailable".into()
+                } else {
+                    value.to_owned()
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let tcp_ok = metrics.get("tcp").is_some_and(|value| value == "ok");
+    let loss = metrics
+        .get("packet_loss_pct")
+        .and_then(|value| value.parse::<f64>().ok());
+    let status = if tcp_ok && loss.is_some_and(|value| value == 0.0) {
+        "connected"
+    } else if tcp_ok {
+        "degraded"
+    } else {
+        "unreachable"
+    };
+    let mut observations = Vec::new();
+    if !tcp_ok {
+        observations.push(format!("TCP port {port} is not reachable from {source}"));
+    }
+    if let Some(loss) = loss.filter(|value| *value > 0.0) {
+        observations.push(format!("ICMP packet loss is {loss}%"));
+    }
+    if let Some(latency) = metrics
+        .get("latency_avg_ms")
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| *value > 2.0)
+    {
+        observations.push(format!(
+            "Average latency is {latency} ms; collective communication may be latency-sensitive"
+        ));
+    }
+    if metrics
+        .get("mtu")
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|value| value < 9000)
+    {
+        observations.push(
+            "MTU is below 9000; verify that the training fabric's MTU is consistent end to end"
+                .into(),
+        );
+    }
+    if metrics
+        .get("rdma_devices")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+        > 0
+        && metrics
+            .get("rdma_active_ports")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+            == 0
+    {
+        observations.push("RDMA devices exist, but no active RDMA port was detected".into());
+    }
+    if metrics
+        .get("bandwidth_tooling")
+        .is_none_or(|value| value == "unavailable")
+    {
+        observations.push("Throughput was not measured; install iperf3 on both nodes for an explicit bandwidth test".into());
+    }
+    PeerReport {
+        source: source.into(),
+        peer: peer.into(),
+        address: address.into(),
+        port,
+        status: status.into(),
+        metrics,
+        observations,
+    }
+}
+
+fn print_peer_report(report: &PeerReport, color: bool) {
+    println!(
+        "\n{}: {} {} {} ({}:{})",
+        paint(color, "1;36", "Peer connectivity"),
+        paint(color, "1", &report.source),
+        paint(color, "2", "->"),
+        paint(color, "1", &report.peer),
+        report.address,
+        report.port
+    );
+    println!(
+        "Status: {}",
+        match report.status.as_str() {
+            "connected" => paint(color, "1;32", "CONNECTED"),
+            "degraded" => paint(color, "1;33", "DEGRADED"),
+            _ => paint(color, "1;31", "UNREACHABLE"),
+        }
+    );
+    let rows = report
+        .metrics
+        .iter()
+        .map(|(key, value)| vec![key.clone(), value.clone()])
+        .collect::<Vec<_>>();
+    print!("{}", table::render(&["METRIC", "VALUE"], &rows));
+    if !report.observations.is_empty() {
+        println!("\nObservations:");
+        for item in &report.observations {
+            println!("  • {item}");
+        }
+    }
 }
 
 pub fn diff(args: DiffArgs, use_password: bool, json: bool) -> io::Result<u8> {
@@ -575,5 +813,42 @@ mod tests {
             snapshot.values["configuration"]["cgroup_memory_limit"],
             "unlimited"
         );
+    }
+
+    #[test]
+    fn classifies_peer_connectivity_and_training_risks() {
+        let report = parse_peer_report(
+            "worker-a",
+            "worker-b",
+            "10.0.0.2",
+            22,
+            "tcp\tok\npacket_loss_pct\t0\nlatency_avg_ms\t2.5\nmtu\t1500\nrdma_devices\t2\nrdma_active_ports\t0\nbandwidth_tooling\tunavailable\n",
+        );
+        assert_eq!(report.status, "connected");
+        assert!(
+            report
+                .observations
+                .iter()
+                .any(|item| item.contains("latency"))
+        );
+        assert!(report.observations.iter().any(|item| item.contains("MTU")));
+        assert!(
+            report
+                .observations
+                .iter()
+                .any(|item| item.contains("no active RDMA"))
+        );
+    }
+
+    #[test]
+    fn marks_failed_tcp_as_unreachable() {
+        let report = parse_peer_report(
+            "worker-a",
+            "worker-b",
+            "10.0.0.2",
+            22,
+            "tcp\tfailed\npacket_loss_pct\t100\n",
+        );
+        assert_eq!(report.status, "unreachable");
     }
 }

@@ -6,6 +6,12 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add `inspect HOST --peer PEER` for active node-to-node network diagnostics
+  aimed at distributed AI workloads, including reachability, latency, jitter,
+  packet loss, routing, MTU, link speed, and RDMA port readiness.
+
 ## [0.6.0] - 2026-09-08
 
 - Flush every stdout/stderr chunk in nested exec-hop relays so interactive
