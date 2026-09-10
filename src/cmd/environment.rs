@@ -123,6 +123,12 @@ pub struct InspectArgs {
     /// ICMP samples used by --peer
     #[arg(long, default_value_t = 4, requires = "peer")]
     samples: u8,
+    /// Measure TCP and, when available, RDMA throughput to --peer
+    #[arg(long, requires = "peer")]
+    bandwidth: bool,
+    /// Seconds to run each bandwidth measurement
+    #[arg(long, default_value_t = 5, requires = "bandwidth")]
+    bandwidth_duration: u8,
     /// Only show these comma-separated sections
     #[arg(long, value_delimiter = ',')]
     section: Vec<String>,
@@ -175,11 +181,37 @@ pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<
         format!("Inspecting {} · connecting and collecting", args.target),
         !json,
     );
+    let active_progress = progress.clone();
     let result = runtime()?.block_on(async {
         let snapshot = collect(&args.target, password.as_deref()).await?;
         let peer = match args.peer.as_deref() {
             Some(peer) => {
-                Some(probe_peer(&args.target, peer, args.samples, password.as_deref()).await?)
+                active_progress.set_message(format!(
+                    "Inspecting {} -> {} · probing network path",
+                    args.target, peer
+                ));
+                let mut report =
+                    probe_peer(&args.target, peer, args.samples, password.as_deref()).await?;
+                if args.bandwidth {
+                    active_progress.set_message(format!(
+                        "Inspecting {} -> {} · measuring TCP and RDMA throughput",
+                        args.target, peer
+                    ));
+                    let result = super::network::measure(
+                        &args.target,
+                        peer,
+                        &report.address,
+                        args.bandwidth_duration,
+                        password.as_deref(),
+                    )
+                    .await;
+                    report.metrics.extend(result.metrics);
+                    report
+                        .observations
+                        .retain(|item| !item.starts_with("Throughput was not measured"));
+                    report.observations.extend(result.observations);
+                }
+                Some(report)
             }
             None => None,
         };
@@ -294,7 +326,7 @@ emit rdma_link_layers "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do
 emit rdma_rates "$(for p in /sys/class/infiniband/*/ports/*/rate; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_active_mtu "$(for p in /sys/class/infiniband/*/ports/*/active_mtu; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 command -v ibv_devinfo >/dev/null 2>&1 && emit rdma_tooling available || emit rdma_tooling unavailable
-command -v iperf3 >/dev/null 2>&1 && emit bandwidth_tooling iperf3 || emit bandwidth_tooling unavailable
+command -v iperf3 >/dev/null 2>&1 && emit iperf3_tooling available || emit iperf3_tooling unavailable
 "#;
 
 fn parse_peer_report(
@@ -369,7 +401,7 @@ fn parse_peer_report(
         observations.push("RDMA devices exist, but no active RDMA port was detected".into());
     }
     if metrics
-        .get("bandwidth_tooling")
+        .get("iperf3_tooling")
         .is_none_or(|value| value == "unavailable")
     {
         observations.push("Throughput was not measured; install iperf3 on both nodes for an explicit bandwidth test".into());
@@ -822,7 +854,7 @@ mod tests {
             "worker-b",
             "10.0.0.2",
             22,
-            "tcp\tok\npacket_loss_pct\t0\nlatency_avg_ms\t2.5\nmtu\t1500\nrdma_devices\t2\nrdma_active_ports\t0\nbandwidth_tooling\tunavailable\n",
+            "tcp\tok\npacket_loss_pct\t0\nlatency_avg_ms\t2.5\nmtu\t1500\nrdma_devices\t2\nrdma_active_ports\t0\niperf3_tooling\tunavailable\n",
         );
         assert_eq!(report.status, "connected");
         assert!(

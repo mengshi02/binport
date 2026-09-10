@@ -328,6 +328,7 @@ stdin 与 `--tty`；`run` 默认使用 `sh -s`，可通过 `--interpreter bash` 
 ```sh
 binport inspect server-a
 binport inspect server-a --peer server-b
+binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -343,6 +344,11 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 网络路径，输出 DNS、路由/网卡/源地址、TCP 与 ICMP 可达性、丢包率、最小/平均/
 最大时延与抖动、MTU、网卡标称速率，以及 RDMA 设备和 ACTIVE 端口数量。默认探测
 只读且不制造大流量；未进行实际吞吐压测时会明确标注，避免把网卡标称速率误当实测带宽。
+
+显式传入 `--bandwidth` 后，Binport 会产生限时 TCP 流量并报告实测吞吐；如果两端
+具备标准 InfiniBand/RoCE perftest 工具，还会根据真实路由网卡选择 RDMA 设备并运行
+`ib_write_bw`。临时接收器带随机认证标记、超时限制，并在测试结束后自动清理。这是
+主动负载测试，不应在未经协调的繁忙生产训练网络上执行。
 
 `profile` 无需安装 Agent、root 或 eBPF，即可短时采样 CPU、内存、系统负载、
 磁盘和网络吞吐；检测到 NVIDIA、海光或摩尔线程加速卡时，还会汇总利用率、显存占用、

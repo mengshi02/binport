@@ -356,6 +356,7 @@ jump and exec-hop routes:
 ```sh
 binport inspect server-a
 binport inspect server-a --peer server-b
+binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -374,6 +375,11 @@ node to another. It reports DNS resolution, route/interface/source address, TCP 
 reachability, packet loss, min/average/max latency and jitter, MTU, NIC link speed, and
 RDMA device/active-port readiness. The probe is read-only and does not generate bulk
 traffic; it explicitly reports when throughput has not been measured.
+Pass `--bandwidth` to generate a time-bounded TCP stream and report measured throughput.
+When both nodes expose standard InfiniBand/RoCE perftest tooling, Binport also selects the
+RDMA device associated with the actual route and runs `ib_write_bw`. Temporary receivers
+are authenticated, time-limited, and cleaned up automatically. This is an active load test;
+do not run it on a busy production training fabric without coordination.
 
 `profile` adds a short, agentless performance window without root or eBPF. It
 summarizes average and peak CPU, memory, load, disk and network throughput, plus
