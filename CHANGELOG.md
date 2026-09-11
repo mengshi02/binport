@@ -19,6 +19,11 @@ All notable changes to binport are documented here. The format follows
 - Bind concurrent RDMA benchmarks to each NIC's local NUMA node with automatic
   `numactl`/`taskset` fallback, and report the selected binding per host.
 
+### Fixed
+
+- Bound every bandwidth subprocess, SSH capture, and cleanup operation with
+  hard timeouts so a stuck perftest link cannot block the whole report.
+
 ## [0.6.0] - 2026-09-08
 
 - Flush every stdout/stderr chunk in nested exec-hop relays so interactive

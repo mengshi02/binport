@@ -388,6 +388,8 @@ The host address's route is labeled `control_path`; all pairable RDMA networks a
 by topology and speed as `rdma_fabrics`, and only the measured group is labeled
 `selected_rdma_fabric`. Binport does not infer that an unselected network is storage or
 auxiliary traffic without configuration evidence.
+Each link has both a remote process deadline and a local SSH deadline; a failed link is
+reported independently while healthy links still contribute to the aggregate result.
 
 `profile` adds a short, agentless performance window without root or eBPF. It
 summarizes average and peak CPU, memory, load, disk and network throughput, plus

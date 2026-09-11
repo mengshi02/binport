@@ -107,6 +107,7 @@ async fn measure_tcp(
     nonce: &str,
     password: Option<&str>,
 ) -> io::Result<BTreeMap<String, String>> {
+    let duration_seconds = u64::from(duration);
     let log = format!("/tmp/binport-tcp-{nonce}.log");
     let port = port.to_string();
     let duration = duration.to_string();
@@ -115,7 +116,7 @@ async fn measure_tcp(
         "python3",
         &["-c", TCP_SERVER, nonce, &port, &duration],
     )?;
-    let (status, stdout, stderr) = capture_remote(peer, server, password).await?;
+    let (status, stdout, stderr) = bounded_capture(peer, server, password, 20).await?;
     if status != 0 {
         return Err(io::Error::other(format!(
             "could not start receiver: {}",
@@ -134,7 +135,7 @@ async fn measure_tcp(
             nonce.into(),
         ],
     )?;
-    let measured = capture_remote(source, client, password).await;
+    let measured = bounded_capture(source, client, password, duration_seconds + 20).await;
     cleanup(peer, pid, &log, password).await;
     let (status, stdout, stderr) = measured?;
     if status != 0 {
@@ -368,8 +369,8 @@ async fn discover_pairs(
     let source_command = command()?;
     let peer_command = command()?;
     let (source_output, peer_output) = tokio::try_join!(
-        capture_remote(source, source_command, password),
-        capture_remote(peer, peer_command, password)
+        bounded_capture(source, source_command, password, 20),
+        bounded_capture(peer, peer_command, password, 20)
     )?;
     let source_endpoints = parse_endpoints(source_output.0, &source_output.1, &source_output.2)?;
     let peer_endpoints = parse_endpoints(peer_output.0, &peer_output.1, &peer_output.2)?;
@@ -470,6 +471,7 @@ async fn measure_rdma_link(
     pair: RdmaPair,
     password: Option<&str>,
 ) -> io::Result<RdmaMeasurement> {
+    let duration_seconds = u64::from(duration);
     let log = format!("/tmp/binport-rdma-{nonce}.log");
     let port = port.to_string();
     let duration = duration.to_string();
@@ -484,8 +486,10 @@ async fn measure_rdma_link(
         port.clone(),
     ];
     let (server_executable, server_args) = numa_bound_command(&pair.peer, server_args);
+    let (server_executable, server_args) =
+        remote_timeout_command(server_executable, server_args, duration_seconds + 15);
     let server = background_command(&log, &server_executable, &server_args)?;
-    let (status, stdout, stderr) = capture_remote(peer, server, password).await?;
+    let (status, stdout, stderr) = bounded_capture(peer, server, password, 20).await?;
     if status != 0 {
         return Err(io::Error::other(
             String::from_utf8_lossy(&stderr).trim().to_owned(),
@@ -505,11 +509,13 @@ async fn measure_rdma_link(
         peer_address.into(),
     ];
     let (client_executable, client_args) = numa_bound_command(&pair.source, client_args);
+    let (client_executable, client_args) =
+        remote_timeout_command(client_executable, client_args, duration_seconds + 15);
     let client = binport::execute_command(
         &client_executable,
         &client_args.into_iter().map(Into::into).collect::<Vec<_>>(),
     )?;
-    let measured = capture_remote(source, client, password).await;
+    let measured = bounded_capture(source, client, password, duration_seconds + 20).await;
     cleanup(peer, pid, &log, password).await;
     let (status, stdout, stderr) = measured?;
     if status != 0 {
@@ -555,6 +561,41 @@ fn numa_bound_command(endpoint: &RdmaEndpoint, arguments: Vec<String>) -> (Strin
     (executable.into(), output)
 }
 
+fn remote_timeout_command(
+    executable: String,
+    arguments: Vec<String>,
+    seconds: u64,
+) -> (String, Vec<String>) {
+    let mut output = vec![
+        "-c".into(),
+        "limit=$1; shift; if command -v timeout >/dev/null 2>&1; then exec timeout -k 2 \"$limit\" \"$@\"; else exec \"$@\"; fi".into(),
+        "binport-timeout".into(),
+        seconds.to_string(),
+        executable,
+    ];
+    output.extend(arguments);
+    ("sh".into(), output)
+}
+
+async fn bounded_capture(
+    host: &str,
+    command: String,
+    password: Option<&str>,
+    seconds: u64,
+) -> io::Result<(u32, Vec<u8>, Vec<u8>)> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(seconds),
+        capture_remote(host, command, password),
+    )
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("operation timed out after {seconds}s"),
+        )
+    })?
+}
+
 fn background_command<S: AsRef<str>>(
     log: &str,
     executable: &str,
@@ -589,7 +630,7 @@ async fn cleanup(host: &str, pid: u32, log: &str, password: Option<&str>) {
             log.into(),
         ],
     ) {
-        let _ = capture_remote(host, command, password).await;
+        let _ = bounded_capture(host, command, password, 10).await;
     }
 }
 
@@ -697,5 +738,14 @@ mod tests {
         let (executable, args) = numa_bound_command(&numactl, Vec::new());
         assert_eq!(executable, "numactl");
         assert_eq!(args, ["--cpunodebind=0", "--membind=0", "ib_write_bw"]);
+    }
+
+    #[test]
+    fn wraps_remote_benchmark_with_a_hard_deadline() {
+        let (executable, args) =
+            remote_timeout_command("ib_write_bw".into(), vec!["-d".into(), "mlx5_0".into()], 20);
+        assert_eq!(executable, "sh");
+        assert_eq!(args[3..], ["20", "ib_write_bw", "-d", "mlx5_0"]);
+        assert!(args[1].contains("timeout -k 2"));
     }
 }
