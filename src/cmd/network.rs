@@ -188,7 +188,7 @@ async fn measure_rdma_fabric(
     nonce: &str,
     password: Option<&str>,
 ) {
-    let pairs = match discover_pairs(source, peer, password).await {
+    let all_pairs = match discover_pairs(source, peer, password).await {
         Ok(pairs) if !pairs.is_empty() => pairs,
         Ok(_) => {
             result.observations.push(
@@ -204,17 +204,22 @@ async fn measure_rdma_fabric(
             return;
         }
     };
+    let fabrics = summarize_fabrics(&all_pairs);
+    result.metrics.insert("rdma_fabrics".into(), fabrics);
+    let pairs = fastest_fabric(all_pairs);
     let advertised = pairs
         .iter()
         .map(|pair| pair.source.rate_gbps.min(pair.peer.rate_gbps))
         .max()
         .unwrap_or(0);
-    result
-        .metrics
-        .insert("rdma_fabric_links".into(), pairs.len().to_string());
-    result
-        .metrics
-        .insert("rdma_fabric_link_rate_gbps".into(), advertised.to_string());
+    result.metrics.insert(
+        "selected_rdma_fabric".into(),
+        format!(
+            "{} x {} Gbps (fastest same-subnet fabric)",
+            pairs.len(),
+            advertised
+        ),
+    );
 
     let mut tests = tokio::task::JoinSet::new();
     for (index, pair) in pairs.into_iter().enumerate() {
@@ -354,7 +359,7 @@ async fn discover_pairs(
     )?;
     let source_endpoints = parse_endpoints(source_output.0, &source_output.1, &source_output.2)?;
     let peer_endpoints = parse_endpoints(peer_output.0, &peer_output.1, &peer_output.2)?;
-    Ok(pair_fastest_fabric(&source_endpoints, &peer_endpoints))
+    Ok(pair_fabrics(&source_endpoints, &peer_endpoints))
 }
 
 fn parse_endpoints(status: u32, stdout: &[u8], stderr: &[u8]) -> io::Result<Vec<RdmaEndpoint>> {
@@ -383,7 +388,7 @@ fn parse_endpoint(line: &str) -> Option<RdmaEndpoint> {
     })
 }
 
-fn pair_fastest_fabric(source: &[RdmaEndpoint], peer: &[RdmaEndpoint]) -> Vec<RdmaPair> {
+fn pair_fabrics(source: &[RdmaEndpoint], peer: &[RdmaEndpoint]) -> Vec<RdmaPair> {
     let mut pairs = source
         .iter()
         .flat_map(|left| {
@@ -395,6 +400,11 @@ fn pair_fastest_fabric(source: &[RdmaEndpoint], peer: &[RdmaEndpoint]) -> Vec<Rd
                 })
         })
         .collect::<Vec<_>>();
+    pairs.sort_by(|left, right| left.source.interface.cmp(&right.source.interface));
+    pairs
+}
+
+fn fastest_fabric(mut pairs: Vec<RdmaPair>) -> Vec<RdmaPair> {
     let fastest = pairs
         .iter()
         .map(|pair| pair.source.rate_gbps.min(pair.peer.rate_gbps))
@@ -403,6 +413,21 @@ fn pair_fastest_fabric(source: &[RdmaEndpoint], peer: &[RdmaEndpoint]) -> Vec<Rd
     pairs.retain(|pair| pair.source.rate_gbps.min(pair.peer.rate_gbps) == fastest);
     pairs.sort_by(|left, right| left.source.interface.cmp(&right.source.interface));
     pairs
+}
+
+fn summarize_fabrics(pairs: &[RdmaPair]) -> String {
+    let mut rates = BTreeMap::<u32, usize>::new();
+    for pair in pairs {
+        *rates
+            .entry(pair.source.rate_gbps.min(pair.peer.rate_gbps))
+            .or_default() += 1;
+    }
+    rates
+        .iter()
+        .rev()
+        .map(|(rate, count)| format!("{count} x {rate} Gbps"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn same_subnet(left: &RdmaEndpoint, right: &RdmaEndpoint) -> bool {
@@ -576,7 +601,7 @@ mod tests {
             parse_endpoint("mlx5_2\tens1\t172.11.0.15/23\t400").unwrap(),
             parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.15/24\t25").unwrap(),
         ];
-        let pairs = pair_fastest_fabric(&source, &peer);
+        let pairs = fastest_fabric(pair_fabrics(&source, &peer));
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].source.device, "mlx5_0");
         assert_eq!(pairs[0].peer.device, "mlx5_2");
@@ -586,6 +611,33 @@ mod tests {
     fn does_not_pair_different_subnets() {
         let source = [parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400").unwrap()];
         let peer = [parse_endpoint("mlx5_2\tens1\t172.11.1.15/24\t400").unwrap()];
-        assert!(pair_fastest_fabric(&source, &peer).is_empty());
+        assert!(pair_fabrics(&source, &peer).is_empty());
+    }
+
+    #[test]
+    fn summarizes_rdma_fabrics_without_guessing_their_purpose() {
+        let mut source = Vec::new();
+        let mut peer = Vec::new();
+        for (index, rate) in [400, 400, 100, 25].into_iter().enumerate() {
+            source.push(
+                parse_endpoint(&format!(
+                    "mlx5_{index}\tens{index}\t172.{}.0.20/24\t{rate}",
+                    index + 10
+                ))
+                .unwrap(),
+            );
+            peer.push(
+                parse_endpoint(&format!(
+                    "mlx5_{}\tens{index}\t172.{}.0.15/24\t{rate}",
+                    index + 5,
+                    index + 10
+                ))
+                .unwrap(),
+            );
+        }
+        assert_eq!(
+            summarize_fabrics(&pair_fabrics(&source, &peer)),
+            "2 x 400 Gbps, 1 x 100 Gbps, 1 x 25 Gbps"
+        );
     }
 }

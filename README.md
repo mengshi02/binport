@@ -382,6 +382,10 @@ link concurrently with `ib_write_bw`. It reports each link, aggregate throughput
 and the active RDMA MTU. Temporary receivers
 are authenticated, time-limited, and cleaned up automatically. This is an active load test;
 do not run it on a busy production training fabric without coordination.
+The host address's route is labeled `control_path`; all pairable RDMA networks are listed
+by topology and speed as `rdma_fabrics`, and only the measured group is labeled
+`selected_rdma_fabric`. Binport does not infer that an unselected network is storage or
+auxiliary traffic without configuration evidence.
 
 `profile` adds a short, agentless performance window without root or eBPF. It
 summarizes average and peak CPU, memory, load, disk and network throughput, plus

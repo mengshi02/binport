@@ -14,6 +14,8 @@ All notable changes to binport are documented here. The format follows
 - Add explicit `--bandwidth` TCP throughput measurement and automatic
   discovery, pairing, and concurrent `ib_write_bw` testing of the fastest
   same-subnet links on standard InfiniBand/RoCE fabrics.
+- Distinguish the host-address control path, discovered RDMA fabrics, and the
+  selected benchmark fabric without guessing workload-specific network roles.
 
 ## [0.6.0] - 2026-09-08
 

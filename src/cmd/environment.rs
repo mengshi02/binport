@@ -292,14 +292,14 @@ resolved=$(getent ahostsv4 "$peer" 2>/dev/null | awk 'NR==1 {print $1}')
 [ -z "$resolved" ] && resolved=$(getent hosts "$peer" 2>/dev/null | awk 'NR==1 {print $1}')
 emit resolved "${resolved:-unavailable}"
 route=$(ip route get "$peer" 2>/dev/null | head -n 1)
-emit interface "$(printf '%s\n' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')"
-emit source_ip "$(printf '%s\n' "$route" | sed -n 's/.* src \([^ ]*\).*/\1/p')"
-printf '%s\n' "$route" | grep -q ' via ' && emit route_type routed || emit route_type direct
+emit control_path_interface "$(printf '%s\n' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')"
+emit control_path_source_ip "$(printf '%s\n' "$route" | sed -n 's/.* src \([^ ]*\).*/\1/p')"
+printf '%s\n' "$route" | grep -q ' via ' && emit control_path_route_type routed || emit control_path_route_type direct
 iface=$(printf '%s\n' "$route" | sed -n 's/.* dev \([^ ]*\).*/\1/p')
-[ -n "$iface" ] && emit mtu "$(cat "/sys/class/net/$iface/mtu" 2>/dev/null)"
-[ -n "$iface" ] && emit link_speed_mbps "$(cat "/sys/class/net/$iface/speed" 2>/dev/null)"
-[ -n "$iface" ] && emit interface_numa_node "$(cat "/sys/class/net/$iface/device/numa_node" 2>/dev/null)"
-[ -n "$iface" ] && emit bond_slaves "$(cat "/sys/class/net/$iface/bonding/slaves" 2>/dev/null)"
+[ -n "$iface" ] && emit control_path_mtu "$(cat "/sys/class/net/$iface/mtu" 2>/dev/null)"
+[ -n "$iface" ] && emit control_path_link_speed_mbps "$(cat "/sys/class/net/$iface/speed" 2>/dev/null)"
+[ -n "$iface" ] && emit control_path_numa_node "$(cat "/sys/class/net/$iface/device/numa_node" 2>/dev/null)"
+[ -n "$iface" ] && emit control_path_bond_slaves "$(cat "/sys/class/net/$iface/bonding/slaves" 2>/dev/null)"
 if command -v ping >/dev/null 2>&1; then
   ping_out=$(LC_ALL=C ping -n -c "$samples" -W 2 "$peer" 2>/dev/null || true)
   emit packet_loss_pct "$(printf '%s\n' "$ping_out" | sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' | tail -n 1)"
@@ -326,7 +326,6 @@ emit rdma_link_layers "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do
 emit rdma_rates "$(for p in /sys/class/infiniband/*/ports/*/rate; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_active_mtu "$(for p in /sys/class/infiniband/*/ports/*/active_mtu; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 command -v ibv_devinfo >/dev/null 2>&1 && emit rdma_tooling available || emit rdma_tooling unavailable
-command -v iperf3 >/dev/null 2>&1 && emit iperf3_tooling available || emit iperf3_tooling unavailable
 "#;
 
 fn parse_peer_report(
@@ -378,7 +377,7 @@ fn parse_peer_report(
         ));
     }
     if metrics
-        .get("mtu")
+        .get("control_path_mtu")
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|value| value < 9000)
     {
@@ -400,12 +399,9 @@ fn parse_peer_report(
     {
         observations.push("RDMA devices exist, but no active RDMA port was detected".into());
     }
-    if metrics
-        .get("iperf3_tooling")
-        .is_none_or(|value| value == "unavailable")
-    {
-        observations.push("Throughput was not measured; install iperf3 on both nodes for an explicit bandwidth test".into());
-    }
+    observations.push(
+        "Throughput was not measured; pass --bandwidth to run an explicit active test".into(),
+    );
     PeerReport {
         source: source.into(),
         peer: peer.into(),
@@ -854,7 +850,7 @@ mod tests {
             "worker-b",
             "10.0.0.2",
             22,
-            "tcp\tok\npacket_loss_pct\t0\nlatency_avg_ms\t2.5\nmtu\t1500\nrdma_devices\t2\nrdma_active_ports\t0\niperf3_tooling\tunavailable\n",
+            "tcp\tok\npacket_loss_pct\t0\nlatency_avg_ms\t2.5\ncontrol_path_mtu\t1500\nrdma_devices\t2\nrdma_active_ports\t0\n",
         );
         assert_eq!(report.status, "connected");
         assert!(
