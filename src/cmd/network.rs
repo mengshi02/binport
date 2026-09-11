@@ -152,6 +152,9 @@ struct RdmaEndpoint {
     address: Ipv4Addr,
     prefix: u8,
     rate_gbps: u32,
+    numa_node: i32,
+    cpu_list: String,
+    binder: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -174,7 +177,10 @@ ibdev2netdev 2>/dev/null | while read -r dev _ _ _ iface state; do
   cidr=$(ip -o -4 addr show dev "$iface" 2>/dev/null | awk 'NR==1 {print $4}')
   [ -n "$cidr" ] || continue
   rate=$(cat "/sys/class/infiniband/$dev/ports/1/rate" 2>/dev/null | awk '{print int($1)}')
-  printf '%s\t%s\t%s\t%s\n' "$dev" "$iface" "$cidr" "${rate:-0}"
+  numa=$(cat "/sys/class/net/$iface/device/numa_node" 2>/dev/null || printf '%s' -1)
+  cpus=$([ "${numa:--1}" -ge 0 ] 2>/dev/null && cat "/sys/devices/system/node/node$numa/cpulist" 2>/dev/null)
+  if command -v numactl >/dev/null 2>&1; then binder=numactl; elif command -v taskset >/dev/null 2>&1; then binder=taskset; else binder=none; fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$dev" "$iface" "$cidr" "${rate:-0}" "${numa:--1}" "${cpus:--}" "$binder"
 done"#;
 
 #[allow(clippy::too_many_arguments)]
@@ -220,6 +226,12 @@ async fn measure_rdma_fabric(
             advertised
         ),
     );
+    if let Some(pair) = pairs.first() {
+        result.metrics.insert(
+            "rdma_numa_binding".into(),
+            format!("source={}, peer={}", pair.source.binder, pair.peer.binder),
+        );
+    }
 
     let mut tests = tokio::task::JoinSet::new();
     for (index, pair) in pairs.into_iter().enumerate() {
@@ -260,11 +272,13 @@ async fn measure_rdma_fabric(
                 result.metrics.insert(
                     format!("rdma_link_{:02}", index + 1),
                     format!(
-                        "{}/{} -> {}/{} · {:.2} Gbps",
+                        "{}/{} (NUMA {}) -> {}/{} (NUMA {}) · {:.2} Gbps",
                         item.pair.source.device,
                         item.pair.source.address,
+                        item.pair.source.numa_node,
                         item.pair.peer.device,
                         item.pair.peer.address,
+                        item.pair.peer.numa_node,
                         item.throughput_gbps
                     ),
                 );
@@ -385,6 +399,9 @@ fn parse_endpoint(line: &str) -> Option<RdmaEndpoint> {
         address: address.parse().ok()?,
         prefix: prefix.parse().ok()?,
         rate_gbps: fields.next()?.parse().ok()?,
+        numa_node: fields.next()?.parse().ok()?,
+        cpu_list: fields.next()?.to_owned(),
+        binder: fields.next()?.to_owned(),
     })
 }
 
@@ -456,20 +473,18 @@ async fn measure_rdma_link(
     let log = format!("/tmp/binport-rdma-{nonce}.log");
     let port = port.to_string();
     let duration = duration.to_string();
-    let server = background_command(
-        &log,
-        "ib_write_bw",
-        &[
-            "-d",
-            &pair.peer.device,
-            "-F",
-            "--report_gbits",
-            "-D",
-            &duration,
-            "-p",
-            &port,
-        ],
-    )?;
+    let server_args = vec![
+        "-d".into(),
+        pair.peer.device.clone(),
+        "-F".into(),
+        "--report_gbits".into(),
+        "-D".into(),
+        duration.clone(),
+        "-p".into(),
+        port.clone(),
+    ];
+    let (server_executable, server_args) = numa_bound_command(&pair.peer, server_args);
+    let server = background_command(&log, &server_executable, &server_args)?;
     let (status, stdout, stderr) = capture_remote(peer, server, password).await?;
     if status != 0 {
         return Err(io::Error::other(
@@ -478,19 +493,21 @@ async fn measure_rdma_link(
     }
     let pid = parse_pid(&stdout)?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let client_args = vec![
+        "-d".into(),
+        pair.source.device.clone(),
+        "-F".into(),
+        "--report_gbits".into(),
+        "-D".into(),
+        duration,
+        "-p".into(),
+        port,
+        peer_address.into(),
+    ];
+    let (client_executable, client_args) = numa_bound_command(&pair.source, client_args);
     let client = binport::execute_command(
-        "ib_write_bw",
-        &[
-            "-d".into(),
-            pair.source.device.clone().into(),
-            "-F".into(),
-            "--report_gbits".into(),
-            "-D".into(),
-            duration.into(),
-            "-p".into(),
-            port.into(),
-            peer_address.into(),
-        ],
+        &client_executable,
+        &client_args.into_iter().map(Into::into).collect::<Vec<_>>(),
     )?;
     let measured = capture_remote(source, client, password).await;
     cleanup(peer, pid, &log, password).await;
@@ -517,7 +534,32 @@ async fn measure_rdma_link(
     })
 }
 
-fn background_command(log: &str, executable: &str, args: &[&str]) -> io::Result<String> {
+fn numa_bound_command(endpoint: &RdmaEndpoint, arguments: Vec<String>) -> (String, Vec<String>) {
+    let mut output = Vec::new();
+    let executable = match endpoint.binder.as_str() {
+        "numactl" if endpoint.numa_node >= 0 => {
+            output.push(format!("--cpunodebind={}", endpoint.numa_node));
+            output.push(format!("--membind={}", endpoint.numa_node));
+            output.push("ib_write_bw".into());
+            "numactl"
+        }
+        "taskset" if endpoint.numa_node >= 0 && endpoint.cpu_list != "-" => {
+            output.push("-c".into());
+            output.push(endpoint.cpu_list.clone());
+            output.push("ib_write_bw".into());
+            "taskset"
+        }
+        _ => "ib_write_bw",
+    };
+    output.extend(arguments);
+    (executable.into(), output)
+}
+
+fn background_command<S: AsRef<str>>(
+    log: &str,
+    executable: &str,
+    args: &[S],
+) -> io::Result<String> {
     let mut values = vec![
         "-c".into(),
         "log=$1; shift; nohup \"$@\" >\"$log\" 2>&1 </dev/null & echo $!".into(),
@@ -525,7 +567,7 @@ fn background_command(log: &str, executable: &str, args: &[&str]) -> io::Result<
         log.into(),
         executable.into(),
     ];
-    values.extend(args.iter().map(|value| (*value).into()));
+    values.extend(args.iter().map(|value| value.as_ref().into()));
     binport::execute_command("sh", &values)
 }
 
@@ -594,12 +636,12 @@ mod tests {
     #[test]
     fn discovers_only_the_fastest_same_subnet_fabric() {
         let source = [
-            parse_endpoint("mlx5_0\tens1\t172.11.0.20/23\t400").unwrap(),
-            parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.20/24\t25").unwrap(),
+            parse_endpoint("mlx5_0\tens1\t172.11.0.20/23\t400\t0\t0-63\ttaskset").unwrap(),
+            parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.20/24\t25\t-1\t-\tnone").unwrap(),
         ];
         let peer = [
-            parse_endpoint("mlx5_2\tens1\t172.11.0.15/23\t400").unwrap(),
-            parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.15/24\t25").unwrap(),
+            parse_endpoint("mlx5_2\tens1\t172.11.0.15/23\t400\t0\t0-63\tnumactl").unwrap(),
+            parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.15/24\t25\t-1\t-\tnone").unwrap(),
         ];
         let pairs = fastest_fabric(pair_fabrics(&source, &peer));
         assert_eq!(pairs.len(), 1);
@@ -609,8 +651,9 @@ mod tests {
 
     #[test]
     fn does_not_pair_different_subnets() {
-        let source = [parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400").unwrap()];
-        let peer = [parse_endpoint("mlx5_2\tens1\t172.11.1.15/24\t400").unwrap()];
+        let source =
+            [parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400\t0\t0-63\ttaskset").unwrap()];
+        let peer = [parse_endpoint("mlx5_2\tens1\t172.11.1.15/24\t400\t0\t0-63\tnumactl").unwrap()];
         assert!(pair_fabrics(&source, &peer).is_empty());
     }
 
@@ -621,14 +664,14 @@ mod tests {
         for (index, rate) in [400, 400, 100, 25].into_iter().enumerate() {
             source.push(
                 parse_endpoint(&format!(
-                    "mlx5_{index}\tens{index}\t172.{}.0.20/24\t{rate}",
+                    "mlx5_{index}\tens{index}\t172.{}.0.20/24\t{rate}\t0\t0-63\ttaskset",
                     index + 10
                 ))
                 .unwrap(),
             );
             peer.push(
                 parse_endpoint(&format!(
-                    "mlx5_{}\tens{index}\t172.{}.0.15/24\t{rate}",
+                    "mlx5_{}\tens{index}\t172.{}.0.15/24\t{rate}\t0\t0-63\tnumactl",
                     index + 5,
                     index + 10
                 ))
@@ -639,5 +682,20 @@ mod tests {
             summarize_fabrics(&pair_fabrics(&source, &peer)),
             "2 x 400 Gbps, 1 x 100 Gbps, 1 x 25 Gbps"
         );
+    }
+
+    #[test]
+    fn selects_available_numa_binding_tool() {
+        let taskset =
+            parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400\t1\t64-127\ttaskset").unwrap();
+        let (executable, args) = numa_bound_command(&taskset, vec!["-d".into(), "mlx5_0".into()]);
+        assert_eq!(executable, "taskset");
+        assert_eq!(args[..3], ["-c", "64-127", "ib_write_bw"]);
+
+        let numactl =
+            parse_endpoint("mlx5_2\tens1\t172.11.0.15/24\t400\t0\t0-63\tnumactl").unwrap();
+        let (executable, args) = numa_bound_command(&numactl, Vec::new());
+        assert_eq!(executable, "numactl");
+        assert_eq!(args, ["--cpunodebind=0", "--membind=0", "ib_write_bw"]);
     }
 }

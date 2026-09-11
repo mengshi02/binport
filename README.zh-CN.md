@@ -349,6 +349,8 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 具备标准 InfiniBand/RoCE perftest 工具，还会运行 `ib_write_bw`。Binport 会自动
 发现两端相同子网中速率最高的训练 fabric，完成跨节点
 设备配对，并发压测全部同速端口，输出逐口吞吐、聚合吞吐、链路不均衡和 RDMA MTU。
+压测进程会优先通过 `numactl`，缺失时通过 `taskset` 绑定到网卡所在NUMA节点，避免
+跨CPU插槽访存造成虚假的链路性能差异。
 临时接收器带随机认证标记、超时限制，并在测试结束后自动清理。这是
 主动负载测试，不应在未经协调的繁忙生产训练网络上执行。
 主机地址实际经过的网络统一标为 `control_path`；所有可以跨节点配对的RDMA网络按

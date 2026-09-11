@@ -16,6 +16,8 @@ All notable changes to binport are documented here. The format follows
   same-subnet links on standard InfiniBand/RoCE fabrics.
 - Distinguish the host-address control path, discovered RDMA fabrics, and the
   selected benchmark fabric without guessing workload-specific network roles.
+- Bind concurrent RDMA benchmarks to each NIC's local NUMA node with automatic
+  `numactl`/`taskset` fallback, and report the selected binding per host.
 
 ## [0.6.0] - 2026-09-08
 

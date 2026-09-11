@@ -379,7 +379,9 @@ Pass `--bandwidth` to generate a time-bounded TCP stream and report measured thr
 When both nodes expose standard InfiniBand/RoCE perftest tooling, Binport also selects the
 fastest same-subnet RDMA fabric, pairs its devices across nodes, and runs every equal-speed
 link concurrently with `ib_write_bw`. It reports each link, aggregate throughput, imbalance,
-and the active RDMA MTU. Temporary receivers
+and the active RDMA MTU. Each process is bound to its NIC-local NUMA node using `numactl`
+or `taskset` when available, preventing cross-socket memory traffic from distorting results.
+Temporary receivers
 are authenticated, time-limited, and cleaned up automatically. This is an active load test;
 do not run it on a busy production training fabric without coordination.
 The host address's route is labeled `control_path`; all pairable RDMA networks are listed
