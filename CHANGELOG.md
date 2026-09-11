@@ -8,7 +8,7 @@ All notable changes to binport are documented here. The format follows
 
 ### Added
 
-- Identify RoCE transport and GID versions in peer inspection, with conservative host-side PFC and ECN detection.
+- Identify RoCE transport and supported GID versions in peer inspection, distinguish the version used by an active test, and conservatively detect host-side PFC and ECN.
 
 ## [0.7.0] - 2026-09-11
 

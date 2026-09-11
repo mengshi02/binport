@@ -375,7 +375,8 @@ node to another. It reports DNS resolution, route/interface/source address, TCP 
 reachability, packet loss, min/average/max latency and jitter, MTU, NIC link speed, and
 RDMA device/active-port readiness. The probe is read-only and does not generate bulk
 traffic; it explicitly reports when throughput has not been measured.
-For Ethernet RDMA, it identifies RoCE and visible RoCE v1/v2 GID types. When `dcb` and
+For Ethernet RDMA, it identifies RoCE and supported RoCE v1/v2 GID types. An active
+bandwidth test also reports the tested GID and RoCE version when perftest exposes them. When `dcb` and
 `tc` are available it also reports host-side PFC and ECN detection; unverifiable state is
 shown as `unavailable`, since end-to-end PFC/ECN still requires switch telemetry.
 Pass `--bandwidth` to generate a time-bounded TCP stream and report measured throughput.

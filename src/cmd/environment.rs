@@ -331,7 +331,7 @@ case "$gid_types" in
   *RoCE*)
     emit rdma_transport RoCE
     roce_versions=$(printf '%s\n' "$gid_types" | tr ',' '\n' | sed -n 's/.*RoCE v\([0-9][0-9]*\).*/v\1/p' | sort -Vu | paste -sd ',' -)
-    emit roce_version "${roce_versions:-unavailable}"
+    emit roce_supported_versions "${roce_versions:-unavailable}"
     ;;
   *)
     link_layers=$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done 2>/dev/null | sort -u | paste -sd ',' -)
@@ -340,7 +340,7 @@ case "$gid_types" in
       *Ethernet*) emit rdma_transport "Ethernet RDMA (type unavailable)" ;;
       *) emit rdma_transport unavailable ;;
     esac
-    emit roce_version unavailable
+    emit roce_supported_versions unavailable
     ;;
 esac
 rdma_ifaces=$(command -v ibdev2netdev >/dev/null 2>&1 && ibdev2netdev 2>/dev/null | awk '$NF == "(Up)" {print $(NF-1)}' | sort -u)
@@ -924,10 +924,10 @@ mod tests {
             "worker-b",
             "198.18.0.2",
             22,
-            "tcp\tok\npacket_loss_pct\t0\nrdma_transport\tRoCE\nrdma_gid_types\tRoCE v1,RoCE v2\nroce_version\tv1,v2\nroce_pfc\tconfigured\nroce_ecn\tnot detected\n",
+            "tcp\tok\npacket_loss_pct\t0\nrdma_transport\tRoCE\nrdma_gid_types\tRoCE v1,RoCE v2\nroce_supported_versions\tv1,v2\nroce_pfc\tconfigured\nroce_ecn\tnot detected\n",
         );
         assert_eq!(report.metrics["rdma_transport"], "RoCE");
-        assert_eq!(report.metrics["roce_version"], "v1,v2");
+        assert_eq!(report.metrics["roce_supported_versions"], "v1,v2");
         assert_eq!(report.metrics["roce_pfc"], "configured");
         assert_eq!(report.metrics["roce_ecn"], "not detected");
     }

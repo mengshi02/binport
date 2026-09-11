@@ -156,6 +156,7 @@ struct RdmaEndpoint {
     numa_node: i32,
     cpu_list: String,
     binder: String,
+    gid_types: BTreeMap<u32, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -169,6 +170,8 @@ struct RdmaMeasurement {
     throughput_gbps: f64,
     message_rate_mpps: String,
     mtu_bytes: Option<u32>,
+    gid_index: Option<u32>,
+    gid_type: Option<String>,
 }
 
 const RDMA_DISCOVERY: &str = r#"command -v ib_write_bw >/dev/null 2>&1 || exit 0
@@ -181,7 +184,8 @@ ibdev2netdev 2>/dev/null | while read -r dev _ _ _ iface state; do
   numa=$(cat "/sys/class/net/$iface/device/numa_node" 2>/dev/null || printf '%s' -1)
   cpus=$([ "${numa:--1}" -ge 0 ] 2>/dev/null && cat "/sys/devices/system/node/node$numa/cpulist" 2>/dev/null)
   if command -v numactl >/dev/null 2>&1; then binder=numactl; elif command -v taskset >/dev/null 2>&1; then binder=taskset; else binder=none; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$dev" "$iface" "$cidr" "${rate:-0}" "${numa:--1}" "${cpus:--}" "$binder"
+  gid_types=$(for p in "/sys/class/infiniband/$dev/ports/1/gid_attrs/types/"*; do [ -r "$p" ] && printf '%s=%s,' "${p##*/}" "$(cat "$p")"; done)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$dev" "$iface" "$cidr" "${rate:-0}" "${numa:--1}" "${cpus:--}" "$binder" "${gid_types%,}"
 done"#;
 
 #[allow(clippy::too_many_arguments)]
@@ -343,6 +347,39 @@ async fn measure_rdma_fabric(
                 .join(","),
         );
     }
+    let mut tested_gids = successes
+        .iter()
+        .filter_map(|item| item.gid_index)
+        .collect::<Vec<_>>();
+    tested_gids.sort_unstable();
+    tested_gids.dedup();
+    result.metrics.insert(
+        "roce_tested_gid_index".into(),
+        if tested_gids.is_empty() {
+            "unavailable".into()
+        } else {
+            tested_gids
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        },
+    );
+    let mut tested_versions = successes
+        .iter()
+        .filter_map(|item| item.gid_type.as_deref())
+        .filter_map(roce_version_from_gid_type)
+        .collect::<Vec<_>>();
+    tested_versions.sort_unstable();
+    tested_versions.dedup();
+    result.metrics.insert(
+        "roce_tested_version".into(),
+        if tested_versions.is_empty() {
+            "unavailable".into()
+        } else {
+            tested_versions.join(",")
+        },
+    );
     if minimum < maximum * 0.9 {
         result.observations.push(format!(
             "RDMA link imbalance detected: slowest link is {:.1}% of the fastest",
@@ -394,15 +431,27 @@ fn parse_endpoint(line: &str) -> Option<RdmaEndpoint> {
     let device = fields.next()?.to_owned();
     let interface = fields.next()?.to_owned();
     let (address, prefix) = fields.next()?.split_once('/')?;
+    let rate_gbps = fields.next()?.parse().ok()?;
+    let numa_node = fields.next()?.parse().ok()?;
+    let cpu_list = fields.next()?.to_owned();
+    let binder = fields.next()?.to_owned();
+    let gid_types = fields
+        .next()
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|entry| entry.split_once('='))
+        .filter_map(|(index, kind)| Some((index.parse().ok()?, kind.to_owned())))
+        .collect();
     Some(RdmaEndpoint {
         device,
         interface,
         address: address.parse().ok()?,
         prefix: prefix.parse().ok()?,
-        rate_gbps: fields.next()?.parse().ok()?,
-        numa_node: fields.next()?.parse().ok()?,
-        cpu_list: fields.next()?.to_owned(),
-        binder: fields.next()?.to_owned(),
+        rate_gbps,
+        numa_node,
+        cpu_list,
+        binder,
+        gid_types,
     })
 }
 
@@ -525,6 +574,8 @@ async fn measure_rdma_link(
     }
     let text = String::from_utf8_lossy(&stdout);
     let mtu_bytes = text.lines().find_map(parse_rdma_mtu);
+    let gid_index = text.lines().find_map(parse_rdma_gid_index);
+    let gid_type = gid_index.and_then(|index| pair.source.gid_types.get(&index).cloned());
     let (throughput, message_rate_mpps) = text
         .lines()
         .filter_map(parse_rdma_row)
@@ -537,6 +588,8 @@ async fn measure_rdma_link(
             .map_err(|_| io::Error::other("invalid ib_write_bw throughput"))?,
         message_rate_mpps,
         mtu_bytes,
+        gid_index,
+        gid_type,
     })
 }
 
@@ -656,6 +709,24 @@ fn parse_rdma_mtu(line: &str) -> Option<u32> {
     value.strip_suffix("[B]")?.trim().parse().ok()
 }
 
+fn parse_rdma_gid_index(line: &str) -> Option<u32> {
+    let (label, value) = line.split_once(':')?;
+    label
+        .trim()
+        .eq_ignore_ascii_case("GID index")
+        .then(|| value.split_whitespace().next()?.parse().ok())?
+}
+
+fn roce_version_from_gid_type(kind: &str) -> Option<&'static str> {
+    if kind.contains("RoCE v2") {
+        Some("v2")
+    } else if kind.contains("RoCE v1") {
+        Some("v1")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +737,9 @@ mod tests {
         assert_eq!(row, ("22.85".into(), "0.04358".into()));
         assert!(parse_rdma_row("#bytes #iterations BW").is_none());
         assert_eq!(parse_rdma_mtu(" Mtu             : 4096[B]"), Some(4096));
+        assert_eq!(parse_rdma_gid_index(" GID index       : 3"), Some(3));
+        assert_eq!(roce_version_from_gid_type("IB/RoCE v1"), Some("v1"));
+        assert_eq!(roce_version_from_gid_type("RoCE v2"), Some("v2"));
     }
 
     #[test]
