@@ -677,11 +677,11 @@ mod tests {
     #[test]
     fn discovers_only_the_fastest_same_subnet_fabric() {
         let source = [
-            parse_endpoint("mlx5_0\tens1\t172.11.0.20/23\t400\t0\t0-63\ttaskset").unwrap(),
+            parse_endpoint("mlx5_0\tens1\t198.18.0.20/23\t400\t0\t0-63\ttaskset").unwrap(),
             parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.20/24\t25\t-1\t-\tnone").unwrap(),
         ];
         let peer = [
-            parse_endpoint("mlx5_2\tens1\t172.11.0.15/23\t400\t0\t0-63\tnumactl").unwrap(),
+            parse_endpoint("mlx5_2\tens1\t198.18.0.15/23\t400\t0\t0-63\tnumactl").unwrap(),
             parse_endpoint("mlx5_bond_0\tbond0\t10.0.0.15/24\t25\t-1\t-\tnone").unwrap(),
         ];
         let pairs = fastest_fabric(pair_fabrics(&source, &peer));
@@ -693,8 +693,8 @@ mod tests {
     #[test]
     fn does_not_pair_different_subnets() {
         let source =
-            [parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400\t0\t0-63\ttaskset").unwrap()];
-        let peer = [parse_endpoint("mlx5_2\tens1\t172.11.1.15/24\t400\t0\t0-63\tnumactl").unwrap()];
+            [parse_endpoint("mlx5_0\tens1\t198.18.0.20/24\t400\t0\t0-63\ttaskset").unwrap()];
+        let peer = [parse_endpoint("mlx5_2\tens1\t198.18.1.15/24\t400\t0\t0-63\tnumactl").unwrap()];
         assert!(pair_fabrics(&source, &peer).is_empty());
     }
 
@@ -728,13 +728,13 @@ mod tests {
     #[test]
     fn selects_available_numa_binding_tool() {
         let taskset =
-            parse_endpoint("mlx5_0\tens1\t172.11.0.20/24\t400\t1\t64-127\ttaskset").unwrap();
+            parse_endpoint("mlx5_0\tens1\t198.18.0.20/24\t400\t1\t64-127\ttaskset").unwrap();
         let (executable, args) = numa_bound_command(&taskset, vec!["-d".into(), "mlx5_0".into()]);
         assert_eq!(executable, "taskset");
         assert_eq!(args[..3], ["-c", "64-127", "ib_write_bw"]);
 
         let numactl =
-            parse_endpoint("mlx5_2\tens1\t172.11.0.15/24\t400\t0\t0-63\tnumactl").unwrap();
+            parse_endpoint("mlx5_2\tens1\t198.18.0.15/24\t400\t0\t0-63\tnumactl").unwrap();
         let (executable, args) = numa_bound_command(&numactl, Vec::new());
         assert_eq!(executable, "numactl");
         assert_eq!(args, ["--cpunodebind=0", "--membind=0", "ib_write_bw"]);

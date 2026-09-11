@@ -6,6 +6,8 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-11
+
 ### Added
 
 - Add `inspect HOST --peer PEER` for active node-to-node network diagnostics
@@ -312,7 +314,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mengshi02/binport/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mengshi02/binport/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mengshi02/binport/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mengshi02/binport/compare/v0.4.0...v0.5.0
