@@ -5,6 +5,7 @@ pub mod fleet;
 pub mod host;
 pub mod lifecycle;
 pub mod native_exec;
+pub mod network;
 pub mod plan;
 pub mod profile;
 pub mod registry;

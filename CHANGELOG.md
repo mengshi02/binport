@@ -6,6 +6,26 @@ All notable changes to binport are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-11
+
+### Added
+
+- Add `inspect HOST --peer PEER` for active node-to-node network diagnostics
+  aimed at distributed AI workloads, including reachability, latency, jitter,
+  packet loss, routing, MTU, link speed, and RDMA port readiness.
+- Add explicit `--bandwidth` TCP throughput measurement and automatic
+  discovery, pairing, and concurrent `ib_write_bw` testing of the fastest
+  same-subnet links on standard InfiniBand/RoCE fabrics.
+- Distinguish the host-address control path, discovered RDMA fabrics, and the
+  selected benchmark fabric without guessing workload-specific network roles.
+- Bind concurrent RDMA benchmarks to each NIC's local NUMA node with automatic
+  `numactl`/`taskset` fallback, and report the selected binding per host.
+
+### Fixed
+
+- Bound every bandwidth subprocess, SSH capture, and cleanup operation with
+  hard timeouts so a stuck perftest link cannot block the whole report.
+
 ## [0.6.0] - 2026-09-08
 
 - Flush every stdout/stderr chunk in nested exec-hop relays so interactive
@@ -294,7 +314,8 @@ All notable changes to binport are documented here. The format follows
 
 - Prefer an explicit SSH `IdentityFile` over an available but empty SSH agent.
 
-[Unreleased]: https://github.com/mengshi02/binport/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mengshi02/binport/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mengshi02/binport/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mengshi02/binport/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mengshi02/binport/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mengshi02/binport/compare/v0.4.0...v0.5.0

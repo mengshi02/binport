@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/mengshi02/binport/main/install.sh |
 
 ```sh
 BINPORT_INSTALL_DIR="$HOME/bin" \
-BINPORT_VERSION="v0.6.0" \
+BINPORT_VERSION="v0.7.0" \
 sh install.sh
 ```
 
@@ -85,7 +85,7 @@ irm https://raw.githubusercontent.com/mengshi02/binport/main/install.ps1 | iex
 从源码安装：
 
 ```sh
-cargo install --git https://github.com/mengshi02/binport --tag v0.6.0 --locked
+cargo install --git https://github.com/mengshi02/binport --tag v0.7.0 --locked
 ```
 
 ## 不用手写 SSH Config
@@ -327,6 +327,8 @@ stdin 与 `--tty`；`run` 默认使用 `sh -s`，可通过 `--interpreter bash` 
 
 ```sh
 binport inspect server-a
+binport inspect server-a --peer server-b
+binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -337,6 +339,26 @@ binport profile server-a --duration 10 --interval 1
 GPU/NPU 型号与驱动、CUDA/ROCm/MUSA（摩尔线程）、NUMA、RDMA、共享内存、CPU 加速指令集，以及
 PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全的调优白名单，
 不会扫描凭据。`diff` 默认只展示差异，传入 `--all` 可以同时展示相同字段。
+
+面向分布式训练与推理，`inspect --peer` 会主动探测一个节点到另一个节点的真实
+网络路径，输出 DNS、路由/网卡/源地址、TCP 与 ICMP 可达性、丢包率、最小/平均/
+最大时延与抖动、MTU、网卡标称速率，以及 RDMA 设备和 ACTIVE 端口数量。默认探测
+只读且不制造大流量；未进行实际吞吐压测时会明确标注，避免把网卡标称速率误当实测带宽。
+
+显式传入 `--bandwidth` 后，Binport 会产生限时 TCP 流量并报告实测吞吐；如果两端
+具备标准 InfiniBand/RoCE perftest 工具，还会运行 `ib_write_bw`。Binport 会自动
+发现两端相同子网中速率最高的训练 fabric，完成跨节点
+设备配对，并发压测全部同速端口，输出逐口吞吐、聚合吞吐、链路不均衡和 RDMA MTU。
+压测进程会优先通过 `numactl`，缺失时通过 `taskset` 绑定到网卡所在NUMA节点，避免
+跨CPU插槽访存造成虚假的链路性能差异。
+临时接收器带随机认证标记、超时限制，并在测试结束后自动清理。这是
+主动负载测试，不应在未经协调的繁忙生产训练网络上执行。
+主机地址实际经过的网络统一标为 `control_path`；所有可以跨节点配对的RDMA网络按
+拓扑与速率汇总为 `rdma_fabrics`；只有实际参与压测的最高速网络才标为
+`selected_rdma_fabric`。在没有配置证据时，Binport 不会擅自把其余网络判断成
+“存储网”或“辅助网”。
+每条链路同时具有远端进程和本地SSH硬超时；单条链路卡住时会独立报告失败，其余
+健康链路仍可正常生成聚合结果，不会让整个命令无限等待。
 
 `profile` 无需安装 Agent、root 或 eBPF，即可短时采样 CPU、内存、系统负载、
 磁盘和网络吞吐；检测到 NVIDIA、海光或摩尔线程加速卡时，还会汇总利用率、显存占用、
