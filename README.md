@@ -377,7 +377,9 @@ RDMA device/active-port readiness. The probe is read-only and does not generate 
 traffic; it explicitly reports when throughput has not been measured.
 Pass `--bandwidth` to generate a time-bounded TCP stream and report measured throughput.
 When both nodes expose standard InfiniBand/RoCE perftest tooling, Binport also selects the
-RDMA device associated with the actual route and runs `ib_write_bw`. Temporary receivers
+fastest same-subnet RDMA fabric, pairs its devices across nodes, and runs every equal-speed
+link concurrently with `ib_write_bw`. It reports each link, aggregate throughput, imbalance,
+and the active RDMA MTU. Temporary receivers
 are authenticated, time-limited, and cleaned up automatically. This is an active load test;
 do not run it on a busy production training fabric without coordination.
 

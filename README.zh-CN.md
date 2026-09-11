@@ -346,8 +346,10 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 只读且不制造大流量；未进行实际吞吐压测时会明确标注，避免把网卡标称速率误当实测带宽。
 
 显式传入 `--bandwidth` 后，Binport 会产生限时 TCP 流量并报告实测吞吐；如果两端
-具备标准 InfiniBand/RoCE perftest 工具，还会根据真实路由网卡选择 RDMA 设备并运行
-`ib_write_bw`。临时接收器带随机认证标记、超时限制，并在测试结束后自动清理。这是
+具备标准 InfiniBand/RoCE perftest 工具，还会运行 `ib_write_bw`。Binport 会自动
+发现两端相同子网中速率最高的训练 fabric，完成跨节点
+设备配对，并发压测全部同速端口，输出逐口吞吐、聚合吞吐、链路不均衡和 RDMA MTU。
+临时接收器带随机认证标记、超时限制，并在测试结束后自动清理。这是
 主动负载测试，不应在未经协调的繁忙生产训练网络上执行。
 
 `profile` 无需安装 Agent、root 或 eBPF，即可短时采样 CPU、内存、系统负载、

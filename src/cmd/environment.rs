@@ -383,7 +383,7 @@ fn parse_peer_report(
         .is_some_and(|value| value < 9000)
     {
         observations.push(
-            "MTU is below 9000; verify that the training fabric's MTU is consistent end to end"
+            "Management/TCP path MTU is below 9000; verify MTU consistency separately from the RDMA fabric"
                 .into(),
         );
     }
