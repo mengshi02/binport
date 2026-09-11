@@ -322,11 +322,11 @@ else
 fi
 emit rdma_devices "$(find /sys/class/infiniband -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
 emit rdma_active_ports "$(for p in /sys/class/infiniband/*/ports/*/state; do [ -r "$p" ] && grep -q 'ACTIVE' "$p" && echo x; done | wc -l | tr -d ' ')"
-emit rdma_link_layers "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
+emit rdma_link_layer "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_rates "$(for p in /sys/class/infiniband/*/ports/*/rate; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_active_mtu "$(for p in /sys/class/infiniband/*/ports/*/active_mtu; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 gid_types=$(for p in /sys/class/infiniband/*/ports/*/gid_attrs/types/*; do [ -r "$p" ] && cat "$p"; done 2>/dev/null | sed '/^[[:space:]]*$/d' | sort -u | paste -sd ',' -)
-emit rdma_gid_types "${gid_types:-unavailable}"
+emit rdma_raw_gid_types "${gid_types:-unavailable}"
 case "$gid_types" in
   *RoCE*)
     emit rdma_transport RoCE
@@ -924,7 +924,7 @@ mod tests {
             "worker-b",
             "198.18.0.2",
             22,
-            "tcp\tok\npacket_loss_pct\t0\nrdma_transport\tRoCE\nrdma_gid_types\tRoCE v1,RoCE v2\nroce_supported_versions\tv1,v2\nroce_pfc\tconfigured\nroce_ecn\tnot detected\n",
+            "tcp\tok\npacket_loss_pct\t0\nrdma_transport\tRoCE\nrdma_raw_gid_types\tIB/RoCE v1,RoCE v2\nroce_supported_versions\tv1,v2\nroce_pfc\tconfigured\nroce_ecn\tnot detected\n",
         );
         assert_eq!(report.metrics["rdma_transport"], "RoCE");
         assert_eq!(report.metrics["roce_supported_versions"], "v1,v2");
