@@ -344,6 +344,9 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 网络路径，输出 DNS、路由/网卡/源地址、TCP 与 ICMP 可达性、丢包率、最小/平均/
 最大时延与抖动、MTU、网卡标称速率，以及 RDMA 设备和 ACTIVE 端口数量。默认探测
 只读且不制造大流量；未进行实际吞吐压测时会明确标注，避免把网卡标称速率误当实测带宽。
+对于以太网 RDMA，输出会明确标识 RoCE、可见的 RoCE v1/v2 GID 类型，并在系统
+提供 `dcb`/`tc` 时报告本机 PFC 与 ECN 配置探测结果；无法验证时显示 `unavailable`，
+不会把缺少工具误报为关闭。PFC/ECN 的端到端有效性仍需结合交换机遥测确认。
 
 显式传入 `--bandwidth` 后，Binport 会产生限时 TCP 流量并报告实测吞吐；如果两端
 具备标准 InfiniBand/RoCE perftest 工具，还会运行 `ib_write_bw`。Binport 会自动

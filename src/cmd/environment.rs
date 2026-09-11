@@ -325,6 +325,43 @@ emit rdma_active_ports "$(for p in /sys/class/infiniband/*/ports/*/state; do [ -
 emit rdma_link_layers "$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_rates "$(for p in /sys/class/infiniband/*/ports/*/rate; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
 emit rdma_active_mtu "$(for p in /sys/class/infiniband/*/ports/*/active_mtu; do [ -r "$p" ] && cat "$p"; done | sort -u | paste -sd ',' -)"
+gid_types=$(for p in /sys/class/infiniband/*/ports/*/gid_attrs/types/*; do [ -r "$p" ] && cat "$p"; done 2>/dev/null | sed '/^[[:space:]]*$/d' | sort -u | paste -sd ',' -)
+emit rdma_gid_types "${gid_types:-unavailable}"
+case "$gid_types" in
+  *RoCE*)
+    emit rdma_transport RoCE
+    roce_versions=$(printf '%s\n' "$gid_types" | tr ',' '\n' | sed -n 's/.*RoCE v\([0-9][0-9]*\).*/v\1/p' | sort -Vu | paste -sd ',' -)
+    emit roce_version "${roce_versions:-unavailable}"
+    ;;
+  *)
+    link_layers=$(for p in /sys/class/infiniband/*/ports/*/link_layer; do [ -r "$p" ] && cat "$p"; done 2>/dev/null | sort -u | paste -sd ',' -)
+    case "$link_layers" in
+      *InfiniBand*) emit rdma_transport InfiniBand ;;
+      *Ethernet*) emit rdma_transport "Ethernet RDMA (type unavailable)" ;;
+      *) emit rdma_transport unavailable ;;
+    esac
+    emit roce_version unavailable
+    ;;
+esac
+rdma_ifaces=$(command -v ibdev2netdev >/dev/null 2>&1 && ibdev2netdev 2>/dev/null | awk '$NF == "(Up)" {print $(NF-1)}' | sort -u)
+pfc_state=unavailable
+if [ -n "$rdma_ifaces" ] && command -v dcb >/dev/null 2>&1; then
+  pfc_state=disabled
+  for rdma_iface in $rdma_ifaces; do
+    pfc_out=$(dcb pfc show dev "$rdma_iface" 2>/dev/null || true)
+    [ -n "$pfc_out" ] || continue
+    printf '%s\n' "$pfc_out" | grep -Eq 'prio-pfc.*:on([[:space:]]|$)' && { pfc_state=configured; break; }
+  done
+fi
+emit roce_pfc "$pfc_state"
+ecn_state=unavailable
+if [ -n "$rdma_ifaces" ] && command -v tc >/dev/null 2>&1; then
+  ecn_state="not detected"
+  for rdma_iface in $rdma_ifaces; do
+    tc qdisc show dev "$rdma_iface" 2>/dev/null | grep -Eqi '(^|[[:space:]])ecn([[:space:]]|$)' && { ecn_state=configured; break; }
+  done
+fi
+emit roce_ecn "$ecn_state"
 command -v ibv_devinfo >/dev/null 2>&1 && emit rdma_tooling available || emit rdma_tooling unavailable
 "#;
 
@@ -878,5 +915,20 @@ mod tests {
             "tcp\tfailed\npacket_loss_pct\t100\n",
         );
         assert_eq!(report.status, "unreachable");
+    }
+
+    #[test]
+    fn preserves_roce_transport_and_fabric_signals() {
+        let report = parse_peer_report(
+            "worker-a",
+            "worker-b",
+            "198.18.0.2",
+            22,
+            "tcp\tok\npacket_loss_pct\t0\nrdma_transport\tRoCE\nrdma_gid_types\tRoCE v1,RoCE v2\nroce_version\tv1,v2\nroce_pfc\tconfigured\nroce_ecn\tnot detected\n",
+        );
+        assert_eq!(report.metrics["rdma_transport"], "RoCE");
+        assert_eq!(report.metrics["roce_version"], "v1,v2");
+        assert_eq!(report.metrics["roce_pfc"], "configured");
+        assert_eq!(report.metrics["roce_ecn"], "not detected");
     }
 }
