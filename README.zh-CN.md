@@ -344,6 +344,8 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 NVIDIA 节点还会展示逐卡 PCIe 当前/最大代际与宽度、GPU NUMA 归属、GPU 间
 NVLink/PCIe 路径汇总、NVLink 活跃链路和标称容量，以及 RDMA 网卡 NUMA 位置。
 标称 NVLink 容量不会伪装成实测卡间带宽；缺少 `nvbandwidth` 或 CUDA Samples 时会明确标注。
+互联结构会明确区分 `switched`、`direct-mesh` 和 `unknown`；确认无交换芯片时显示
+`none`，探针无法判断时才显示 `unknown`，不会用 `unavailable` 混淆两种情况。
 显式传入 `--gpu-bandwidth` 会通过 NVIDIA CUDA 或摩尔线程 MUSA Driver API
 逐对测量 GPU P2P 单向正反带宽，
 无需 PyTorch、CUDA Toolkit 或下载额外程序。该操作会短时占用所有可见 GPU，请仅在空闲节点运行。

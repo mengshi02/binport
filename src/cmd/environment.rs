@@ -54,6 +54,25 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   emit_if gpu_interconnect.topology_paths "$(printf '%s\n' "$nvidia_topology" | awk '$1 ~ /^GPU[0-9]+$/ {for(i=2;i<=NF;i++) if($i ~ /^(NV[0-9]+|PIX|PXB|PHB|NODE|SYS)$/) count[$i]++} END {for(path in count) printf "%s%s=%d pairs", separator,path,count[path]/2; separator=", "}')"
   nvlink_status=$(nvidia-smi nvlink --status 2>/dev/null || true)
   emit_if gpu_interconnect.nvlink "$(printf '%s\n' "$nvlink_status" | awk '/^GPU [0-9]+:/ {gpus++} /Link [0-9]+:/ {total++; if($3 ~ /^[0-9.]+$/){active++; speed=$3}} END {if(gpus && total){links=active/gpus; printf "%d/%d links active · %.3f GB/s per link · %.2f GB/s per GPU advertised",active,total,speed,speed*links}}')"
+  nvswitch_devices=$(find /sys/bus/pci/drivers/nvidia-nvswitch -mindepth 1 -maxdepth 1 -type l -printf '%f\n' 2>/dev/null | grep -E '^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$' | sort)
+  nvswitch_count=$(printf '%s\n' "$nvswitch_devices" | sed '/^$/d' | wc -l | tr -d ' ')
+  if [ "${nvswitch_count:-0}" -gt 0 ] 2>/dev/null; then
+    emit gpu_interconnect.fabric_topology switched
+    emit gpu_interconnect.fabric_switch "NVIDIA NVSwitch x$nvswitch_count"
+    emit gpu_interconnect.fabric_switch_status driver-bound
+    emit_if gpu_interconnect.fabric_switch_devices "$(printf '%s\n' "$nvswitch_devices" | paste -sd ',' -)"
+  else
+    remote_links=$(nvidia-smi nvlink --remotelinkinfo 2>/dev/null || true)
+    if printf '%s\n' "$remote_links" | grep -q 'Remote Device'; then
+      emit gpu_interconnect.fabric_topology direct-or-undetermined
+      emit gpu_interconnect.fabric_switch unknown
+      emit gpu_interconnect.fabric_switch_status not-detected
+    else
+      emit gpu_interconnect.fabric_topology unknown
+      emit gpu_interconnect.fabric_switch unknown
+      emit gpu_interconnect.fabric_switch_status probe-unavailable
+    fi
+  fi
   emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1; then printf 'available via built-in CUDA Driver API probe'; else printf 'unavailable (python3 is required)'; fi)"
   rdma_numa=$(for iface in /sys/class/net/*; do [ -e "$iface/device/infiniband" ] || continue; numa=$(cat "$iface/device/numa_node" 2>/dev/null); [ "${numa:--1}" -ge 0 ] 2>/dev/null && printf '%s=NUMA%s\n' "${iface##*/}" "$numa"; done | sort -u | paste -sd ',' -)
   emit_if gpu_interconnect.rdma_numa "$rdma_numa"
@@ -116,6 +135,16 @@ if command -v mthreads-gmi >/dev/null 2>&1 && [ -n "$moore_list" ]; then
   emit_if gpu_interconnect.pcie_links "$(printf '%s\n' "$moore_info" | awk -F'|' '$1 ~ /^[0-9]+[[:space:]]/ {split($1,a,/ +/); gpu=a[1]; bus=$2; gsub(/[[:space:]]/,"",bus); next} gpu!="" && $2 ~ /x\(/ {link=$2; gsub(/[[:space:]]/,"",link); printf "%sGPU%s=%s %s",separator,gpu,bus,link; separator="; "; gpu=""}')"
   mtlink_status=$(mthreads-gmi mtlink -s 2>/dev/null || true)
   emit_if gpu_interconnect.mtlink "$(printf '%s\n' "$mtlink_status" | awk '/LINK [0-9]+/ {total++; if($0 ~ /LINK UP/) active++} END {if(total) printf "%d/%d links active",active,total}')"
+  mtlink_remote=$(mthreads-gmi mtlink -r -i 0 -l 0 2>/dev/null || true)
+  if printf '%s\n' "$mtlink_remote" | grep -q 'remote device.*GPU'; then
+    emit gpu_interconnect.fabric_topology direct-mesh
+    emit gpu_interconnect.fabric_switch "none (GPU-to-GPU direct MTLink)"
+    emit gpu_interconnect.fabric_switch_status not-applicable
+  else
+    emit gpu_interconnect.fabric_topology unknown
+    emit gpu_interconnect.fabric_switch unknown
+    emit gpu_interconnect.fabric_switch_status probe-unavailable
+  fi
   emit gpu_interconnect.p2p "$(p2p=$(mthreads-gmi topo -p2p w 2>/dev/null || true); ok=$(printf '%s\n' "$p2p" | awk '$1 ~ /^GPU[0-9]+$/ {for(i=2;i<=NF;i++) if($i=="OK") n++} END {print n+0}'); total=$((moore_count * (moore_count - 1))); printf '%s/%s directed pairs writable' "$ok" "$total")"
   emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1; then printf 'available via built-in MUSA Driver API probe'; else printf 'unavailable (python3 is required)'; fi)"
 fi

@@ -375,6 +375,8 @@ On NVIDIA hosts it also reports per-GPU current/max PCIe links, GPU NUMA placeme
 NVLink/PCIe path summaries, active NVLink capacity, and RDMA NIC NUMA placement. Advertised
 NVLink capacity is never presented as measured GPU-to-GPU bandwidth; missing benchmark
 tooling is reported explicitly.
+Fabric inspection distinguishes `switched`, `direct-mesh`, and `unknown`. A confirmed
+absence is reported as `none`; an inconclusive probe is reported as `unknown`.
 Pass `--gpu-bandwidth` to actively measure both directions of every NVIDIA or Moore Threads
 GPU P2P pair through the CUDA or MUSA Driver API, without PyTorch, a development toolkit,
 or downloaded executables.
