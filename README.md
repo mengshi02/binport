@@ -357,6 +357,7 @@ jump and exec-hop routes:
 binport inspect server-a
 binport inspect server-a --peer server-b
 binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
+binport inspect gpu-server --gpu-bandwidth
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -369,6 +370,13 @@ NUMA, RDMA, shared memory, CPU acceleration features, and installed inference
 packages. It reads only a safe allowlist of tuning variables and never scans
 credentials. By default `diff` prints only changed fields; add `--all` to
 include equal values.
+On NVIDIA hosts it also reports per-GPU current/max PCIe links, GPU NUMA placement,
+NVLink/PCIe path summaries, active NVLink capacity, and RDMA NIC NUMA placement. Advertised
+NVLink capacity is never presented as measured GPU-to-GPU bandwidth; missing benchmark
+tooling is reported explicitly.
+Pass `--gpu-bandwidth` to actively measure both directions of every NVIDIA GPU P2P pair
+through the CUDA Driver API, without PyTorch, a CUDA Toolkit, or downloaded executables.
+This briefly loads every visible GPU and should only be used on idle nodes.
 
 For distributed training and inference, `inspect --peer` actively tests the path from one
 node to another. It reports DNS resolution, route/interface/source address, TCP and ICMP

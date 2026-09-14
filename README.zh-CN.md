@@ -329,6 +329,7 @@ stdin 与 `--tty`；`run` 默认使用 `sh -s`，可通过 `--interpreter bash` 
 binport inspect server-a
 binport inspect server-a --peer server-b
 binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
+binport inspect gpu-server --gpu-bandwidth
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -339,6 +340,11 @@ binport profile server-a --duration 10 --interval 1
 GPU/NPU 型号与驱动、CUDA/ROCm/MUSA（摩尔线程）、NUMA、RDMA、共享内存、CPU 加速指令集，以及
 PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全的调优白名单，
 不会扫描凭据。`diff` 默认只展示差异，传入 `--all` 可以同时展示相同字段。
+NVIDIA 节点还会展示逐卡 PCIe 当前/最大代际与宽度、GPU NUMA 归属、GPU 间
+NVLink/PCIe 路径汇总、NVLink 活跃链路和标称容量，以及 RDMA 网卡 NUMA 位置。
+标称 NVLink 容量不会伪装成实测卡间带宽；缺少 `nvbandwidth` 或 CUDA Samples 时会明确标注。
+显式传入 `--gpu-bandwidth` 会通过 NVIDIA Driver API 逐对测量 GPU P2P 单向正反带宽，
+无需 PyTorch、CUDA Toolkit 或下载额外程序。该操作会短时占用所有可见 GPU，请仅在空闲节点运行。
 
 面向分布式训练与推理，`inspect --peer` 会主动探测一个节点到另一个节点的真实
 网络路径，输出 DNS、路由/网卡/源地址、TCP 与 ICMP 可达性、丢包率、最小/平均/

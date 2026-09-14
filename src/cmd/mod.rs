@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bastion;
 pub mod environment;
 pub mod fleet;
+pub mod gpu;
 pub mod host;
 pub mod lifecycle;
 pub mod native_exec;

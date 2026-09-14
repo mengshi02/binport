@@ -46,6 +46,18 @@ emit accelerator.nvidia_count "$(if command -v nvidia-smi >/dev/null 2>&1; then 
 emit_if accelerator.nvidia_gpus "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,memory.total,compute_cap --format=csv,noheader 2>/dev/null | paste -sd ';' -)"
 emit_if accelerator.nvidia_driver "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | sort -u | paste -sd ',' -)"
 emit_if accelerator.nvidia_pcie "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=csv,noheader 2>/dev/null | awk -F, '{gsub(/ /, ""); print "Gen " $1 " x" $2}' | sort -u | paste -sd ';' -)"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia_count=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+  nvidia_topology=$(nvidia-smi topo -m 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+  emit_if gpu_interconnect.pcie_links "$(nvidia-smi --query-gpu=index,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max --format=csv,noheader,nounits 2>/dev/null | awk -F, '{for(i=1;i<=NF;i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i); printf "%sGPU%s=%s Gen%s x%s (max Gen%s x%s)", separator,$1,$2,$3,$5,$4,$6; separator="; "}')"
+  emit_if gpu_interconnect.gpu_numa "$(printf '%s\n' "$nvidia_topology" | awk -v n="$nvidia_count" '$1 ~ /^GPU[0-9]+$/ && $(n+3) ~ /^-?[0-9]+$/ {printf "%s%s=NUMA%s", separator,$1,$(n+3); separator=", "}')"
+  emit_if gpu_interconnect.topology_paths "$(printf '%s\n' "$nvidia_topology" | awk '$1 ~ /^GPU[0-9]+$/ {for(i=2;i<=NF;i++) if($i ~ /^(NV[0-9]+|PIX|PXB|PHB|NODE|SYS)$/) count[$i]++} END {for(path in count) printf "%s%s=%d pairs", separator,path,count[path]/2; separator=", "}')"
+  nvlink_status=$(nvidia-smi nvlink --status 2>/dev/null || true)
+  emit_if gpu_interconnect.nvlink "$(printf '%s\n' "$nvlink_status" | awk '/^GPU [0-9]+:/ {gpus++} /Link [0-9]+:/ {total++; if($3 ~ /^[0-9.]+$/){active++; speed=$3}} END {if(gpus && total){links=active/gpus; printf "%d/%d links active · %.3f GB/s per link · %.2f GB/s per GPU advertised",active,total,speed,speed*links}}')"
+  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1; then printf 'available via built-in CUDA Driver API probe'; else printf 'unavailable (python3 is required)'; fi)"
+  rdma_numa=$(for iface in /sys/class/net/*; do [ -e "$iface/device/infiniband" ] || continue; numa=$(cat "$iface/device/numa_node" 2>/dev/null); [ "${numa:--1}" -ge 0 ] 2>/dev/null && printf '%s=NUMA%s\n' "${iface##*/}" "$numa"; done | sort -u | paste -sd ',' -)
+  emit_if gpu_interconnect.rdma_numa "$rdma_numa"
+fi
 emit_if accelerator.cuda_driver_api "$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([^ ]*\).*/\1/p' | head -n 1)"
 emit_if accelerator.cuda "$(command -v nvcc >/dev/null 2>&1 && nvcc --version 2>/dev/null | awk '/release/ {print $0; exit}')"
 emit_if accelerator.rocm "$(if [ -r /opt/rocm/.info/version ]; then cat /opt/rocm/.info/version; elif command -v hipcc >/dev/null 2>&1; then hipcc --version 2>/dev/null | head -n 1; fi)"
@@ -129,6 +141,9 @@ pub struct InspectArgs {
     /// Seconds to run each bandwidth measurement
     #[arg(long, default_value_t = 5, requires = "bandwidth")]
     bandwidth_duration: u8,
+    /// Actively measure NVIDIA GPU-to-GPU P2P bandwidth (temporarily loads all GPUs)
+    #[arg(long)]
+    gpu_bandwidth: bool,
     /// Only show these comma-separated sections
     #[arg(long, value_delimiter = ',')]
     section: Vec<String>,
@@ -183,7 +198,15 @@ pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<
     );
     let active_progress = progress.clone();
     let result = runtime()?.block_on(async {
-        let snapshot = collect(&args.target, password.as_deref()).await?;
+        let mut snapshot = collect(&args.target, password.as_deref()).await?;
+        if args.gpu_bandwidth {
+            active_progress.set_message(format!(
+                "Inspecting {} · measuring GPU-to-GPU P2P bandwidth",
+                args.target
+            ));
+            let metrics = super::gpu::measure_nvidia_p2p(&args.target, password.as_deref()).await?;
+            snapshot.values.insert("gpu_bandwidth".into(), metrics);
+        }
         let peer = match args.peer.as_deref() {
             Some(peer) => {
                 active_progress.set_message(format!(
