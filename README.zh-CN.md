@@ -330,6 +330,7 @@ binport inspect server-a
 binport inspect server-a --peer server-b
 binport inspect server-a --peer server-b --bandwidth --bandwidth-duration 5
 binport inspect gpu-server --gpu-bandwidth
+binport inspect gpu-a --peer gpu-b --gpu-bandwidth --bandwidth --bandwidth-duration 5
 binport diff server-a server-b
 binport diff server-a server-b --section system,runtime
 binport --json diff server-a server-b
@@ -343,8 +344,11 @@ PyTorch、vLLM、Transformers 等推理包版本。环境变量仅采集安全�
 NVIDIA 节点还会展示逐卡 PCIe 当前/最大代际与宽度、GPU NUMA 归属、GPU 间
 NVLink/PCIe 路径汇总、NVLink 活跃链路和标称容量，以及 RDMA 网卡 NUMA 位置。
 标称 NVLink 容量不会伪装成实测卡间带宽；缺少 `nvbandwidth` 或 CUDA Samples 时会明确标注。
-显式传入 `--gpu-bandwidth` 会通过 NVIDIA Driver API 逐对测量 GPU P2P 单向正反带宽，
+显式传入 `--gpu-bandwidth` 会通过 NVIDIA CUDA 或摩尔线程 MUSA Driver API
+逐对测量 GPU P2P 单向正反带宽，
 无需 PyTorch、CUDA Toolkit 或下载额外程序。该操作会短时占用所有可见 GPU，请仅在空闲节点运行。
+与 `--peer` 一起使用时会并发测量两端节点的卡内带宽，再测量节点间 TCP/RDMA，
+一次获得分布式训练通信链路的完整结果。
 
 面向分布式训练与推理，`inspect --peer` 会主动探测一个节点到另一个节点的真实
 网络路径，输出 DNS、路由/网卡/源地址、TCP 与 ICMP 可达性、丢包率、最小/平均/

@@ -139,9 +139,12 @@ async fn measure_tcp(
     cleanup(peer, pid, &log, password).await;
     let (status, stdout, stderr) = measured?;
     if status != 0 {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&stderr).trim().to_owned(),
-        ));
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
+        return Err(io::Error::other(if detail.is_empty() {
+            format!("TCP bandwidth client exited with status {status} without diagnostics")
+        } else {
+            detail
+        }));
     }
     Ok(parse_metrics(&stdout))
 }
@@ -238,6 +241,7 @@ async fn measure_rdma_fabric(
         );
     }
 
+    let retry_pairs = pairs.clone();
     let mut tests = tokio::task::JoinSet::new();
     for (index, pair) in pairs.into_iter().enumerate() {
         let link_nonce = format!("{nonce}-{index}");
@@ -272,6 +276,30 @@ async fn measure_rdma_fabric(
     measured.sort_by_key(|(index, _)| *index);
     let mut successes = Vec::new();
     for (index, measurement) in measured {
+        let measurement = match measurement {
+            Ok(item) => Ok(item),
+            Err(first_error) => {
+                let pair = retry_pairs[index].clone();
+                let retry_nonce = format!("{nonce}-retry-{index}");
+                match measure_rdma_link(
+                    source,
+                    peer,
+                    peer_address,
+                    first_port.saturating_add(index as u16),
+                    duration,
+                    retry_nonce,
+                    pair,
+                    password,
+                )
+                .await
+                {
+                    Ok(item) => Ok(item),
+                    Err(retry_error) => Err(io::Error::other(format!(
+                        "{first_error}; retry failed: {retry_error}"
+                    ))),
+                }
+            }
+        };
         match measurement {
             Ok(item) => {
                 result.metrics.insert(
@@ -540,9 +568,12 @@ async fn measure_rdma_link(
     let server = background_command(&log, &server_executable, &server_args)?;
     let (status, stdout, stderr) = bounded_capture(peer, server, password, 20).await?;
     if status != 0 {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&stderr).trim().to_owned(),
-        ));
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
+        return Err(io::Error::other(if detail.is_empty() {
+            format!("ib_write_bw exited with status {status} without diagnostics")
+        } else {
+            detail
+        }));
     }
     let pid = parse_pid(&stdout)?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -568,9 +599,12 @@ async fn measure_rdma_link(
     cleanup(peer, pid, &log, password).await;
     let (status, stdout, stderr) = measured?;
     if status != 0 {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&stderr).trim().to_owned(),
-        ));
+        let detail = String::from_utf8_lossy(&stderr).trim().to_owned();
+        return Err(io::Error::other(if detail.is_empty() {
+            format!("ib_write_bw exited with status {status} without diagnostics")
+        } else {
+            detail
+        }));
     }
     let text = String::from_utf8_lossy(&stdout);
     let mtu_bytes = text.lines().find_map(parse_rdma_mtu);

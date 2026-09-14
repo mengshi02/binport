@@ -2,18 +2,27 @@ use super::native_exec::capture_remote;
 use std::collections::BTreeMap;
 use std::io;
 
-const NVIDIA_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, subprocess, time
-libname = ctypes.util.find_library("cuda") or "libcuda.so.1"
-cu = ctypes.CDLL(libname)
+const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, shutil, subprocess, time
+if shutil.which("nvidia-smi"):
+    vendor, prefix = "NVIDIA", "cu"
+    library = ctypes.util.find_library("cuda") or "libcuda.so.1"
+    topology_command = ["nvidia-smi", "topo", "-m"]
+elif shutil.which("mthreads-gmi"):
+    vendor, prefix = "Moore Threads", "mu"
+    library = ctypes.util.find_library("musa") or "libmusa.so.1"
+    topology_command = ["mthreads-gmi", "topo", "-mg"]
+else:
+    raise RuntimeError("no supported NVIDIA or Moore Threads accelerator was detected")
+driver = ctypes.CDLL(library)
 
 def call(name, *args):
-    code = getattr(cu, name)(*args)
+    code = getattr(driver, prefix + name)(*args)
     if code != 0:
-        raise RuntimeError(f"{name} failed with CUDA error {code}")
+        raise RuntimeError(f"{prefix + name} failed with driver error {code}")
 
-call("cuInit", 0)
+call("Init", 0)
 count = ctypes.c_int()
-call("cuDeviceGetCount", ctypes.byref(count))
+call("DeviceGetCount", ctypes.byref(count))
 if count.value < 2:
     raise RuntimeError("at least two NVIDIA GPUs are required")
 
@@ -22,14 +31,14 @@ devices = []
 for gpu in range(count.value):
     device = ctypes.c_int()
     context = ctypes.c_void_p()
-    call("cuDeviceGet", ctypes.byref(device), gpu)
-    call("cuDevicePrimaryCtxRetain", ctypes.byref(context), device)
+    call("DeviceGet", ctypes.byref(device), gpu)
+    call("DevicePrimaryCtxRetain", ctypes.byref(context), device)
     devices.append(device)
     contexts.append(context)
 
 paths = {}
 try:
-    topo = subprocess.check_output(["nvidia-smi", "topo", "-m"], text=True, stderr=subprocess.DEVNULL)
+    topo = subprocess.check_output(topology_command, text=True, stderr=subprocess.DEVNULL)
     for line in topo.splitlines():
         columns = line.split()
         if columns and columns[0].startswith("GPU") and columns[0][3:].isdigit():
@@ -44,35 +53,35 @@ size = 256 * 1024 * 1024
 iterations = 8
 
 def allocate(context):
-    call("cuCtxSetCurrent", context)
+    call("CtxSetCurrent", context)
     pointer = ctypes.c_uint64()
-    call("cuMemAlloc_v2", ctypes.byref(pointer), ctypes.c_size_t(size))
+    call("MemAlloc_v2", ctypes.byref(pointer), ctypes.c_size_t(size))
     return pointer
 
 def free(context, pointer):
-    call("cuCtxSetCurrent", context)
-    call("cuMemFree_v2", pointer)
+    call("CtxSetCurrent", context)
+    call("MemFree_v2", pointer)
 
 def bandwidth(source, destination):
     can_access = ctypes.c_int()
-    call("cuDeviceCanAccessPeer", ctypes.byref(can_access), devices[destination], devices[source])
+    call("DeviceCanAccessPeer", ctypes.byref(can_access), devices[destination], devices[source])
     if not can_access.value:
         return None
     src_ctx, dst_ctx = contexts[source], contexts[destination]
     src = allocate(src_ctx)
     dst = allocate(dst_ctx)
     try:
-        call("cuCtxSetCurrent", dst_ctx)
-        code = cu.cuCtxEnablePeerAccess(src_ctx, 0)
+        call("CtxSetCurrent", dst_ctx)
+        code = getattr(driver, prefix + "CtxEnablePeerAccess")(src_ctx, 0)
         if code not in (0, 704):
-            raise RuntimeError(f"cuCtxEnablePeerAccess failed with CUDA error {code}")
+            raise RuntimeError(f"{prefix}CtxEnablePeerAccess failed with driver error {code}")
         for _ in range(2):
-            call("cuMemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
-        call("cuCtxSynchronize")
+            call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
+        call("CtxSynchronize")
         started = time.perf_counter()
         for _ in range(iterations):
-            call("cuMemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
-        call("cuCtxSynchronize")
+            call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
+        call("CtxSynchronize")
         elapsed = time.perf_counter() - started
         return size * iterations / elapsed / 1e9
     finally:
@@ -80,6 +89,7 @@ def bandwidth(source, destination):
         free(src_ctx, src)
 
 values = []
+print(f"driver_api\t{vendor} {prefix}* Driver API")
 for left in range(count.value):
     for right in range(left + 1, count.value):
         forward = bandwidth(left, right)
@@ -94,11 +104,11 @@ if values:
     print(f"summary\t{len(values)//2} pairs · min {min(values):.2f} · avg {sum(values)/len(values):.2f} · max {max(values):.2f} GB/s")
 "#;
 
-pub async fn measure_nvidia_p2p(
+pub async fn measure_gpu_p2p(
     target: &str,
     password: Option<&str>,
 ) -> io::Result<BTreeMap<String, String>> {
-    let command = binport::execute_command("python3", &["-c".into(), NVIDIA_P2P_BENCHMARK.into()])?;
+    let command = binport::execute_command("python3", &["-c".into(), GPU_P2P_BENCHMARK.into()])?;
     let (status, stdout, stderr) = tokio::time::timeout(
         std::time::Duration::from_secs(180),
         capture_remote(target, command, password),

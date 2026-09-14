@@ -10,7 +10,7 @@ All notable changes to binport are documented here. The format follows
 
 - Identify RoCE transport and supported GID versions in peer inspection, distinguish the version used by an active test, and conservatively detect host-side PFC and ECN.
 - Inspect NVIDIA GPU PCIe negotiation, NUMA placement, GPU interconnect topology, NVLink health/capacity, and GPU-to-RNIC locality without requiring CUDA development tools.
-- Measure every NVIDIA GPU P2P pair in both directions through the CUDA Driver API with no PyTorch or CUDA Toolkit dependency.
+- Measure every NVIDIA or Moore Threads GPU P2P pair in both directions through the CUDA/MUSA Driver API with no framework or development-toolkit dependency.
 
 ## [0.7.0] - 2026-09-11
 

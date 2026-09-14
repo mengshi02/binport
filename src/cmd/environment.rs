@@ -108,6 +108,17 @@ emit_if accelerator.moore_threads_driver "$(printf '%s\n' "$moore_info" | sed -n
 emit_if accelerator.moore_threads_vram_mib "$(printf '%s\n' "$moore_info" | sed -n 's/.*MiB(\([0-9][0-9]*\)MiB).*/\1/p' | head -n 1)"
 emit_if accelerator.moore_threads_pcie "$(printf '%s\n' "$moore_info" | awk -F'|' '$2 ~ /x\(/ {gsub(/[[:space:]]/, "", $2); print $2}' | sort -u | paste -sd ',' -)"
 emit_if accelerator.musa "$(command -v musa_driver_version >/dev/null 2>&1 && musa_driver_version 2>/dev/null | sed -n 's/.*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+if command -v mthreads-gmi >/dev/null 2>&1 && [ -n "$moore_list" ]; then
+  moore_count=$(printf '%s\n' "$moore_list" | grep -c '^GPU ')
+  moore_topology=$(mthreads-gmi topo -mg 2>/dev/null || true)
+  emit_if gpu_interconnect.gpu_numa "$(printf '%s\n' "$moore_topology" | awk -v n="$moore_count" '$1 ~ /^GPU[0-9]+$/ && $(n+3) ~ /^-?[0-9]+$/ {printf "%s%s=NUMA%s", separator,$1,$(n+3); separator=", "}')"
+  emit_if gpu_interconnect.topology_paths "$(printf '%s\n' "$moore_topology" | awk '$1 ~ /^GPU[0-9]+$/ {for(i=2;i<=NF;i++) if($i ~ /^(MT[0-9]+|SPB|MPB|HPB|NODE|SYS|INT)$/) count[$i]++} END {for(path in count) printf "%s%s=%d pairs", separator,path,count[path]/2; separator=", "}')"
+  emit_if gpu_interconnect.pcie_links "$(printf '%s\n' "$moore_info" | awk -F'|' '$1 ~ /^[0-9]+[[:space:]]/ {split($1,a,/ +/); gpu=a[1]; bus=$2; gsub(/[[:space:]]/,"",bus); next} gpu!="" && $2 ~ /x\(/ {link=$2; gsub(/[[:space:]]/,"",link); printf "%sGPU%s=%s %s",separator,gpu,bus,link; separator="; "; gpu=""}')"
+  mtlink_status=$(mthreads-gmi mtlink -s 2>/dev/null || true)
+  emit_if gpu_interconnect.mtlink "$(printf '%s\n' "$mtlink_status" | awk '/LINK [0-9]+/ {total++; if($0 ~ /LINK UP/) active++} END {if(total) printf "%d/%d links active",active,total}')"
+  emit gpu_interconnect.p2p "$(p2p=$(mthreads-gmi topo -p2p w 2>/dev/null || true); ok=$(printf '%s\n' "$p2p" | awk '$1 ~ /^GPU[0-9]+$/ {for(i=2;i<=NF;i++) if($i=="OK") n++} END {print n+0}'); total=$((moore_count * (moore_count - 1))); printf '%s/%s directed pairs writable' "$ok" "$total")"
+  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1; then printf 'available via built-in MUSA Driver API probe'; else printf 'unavailable (python3 is required)'; fi)"
+fi
 emit accelerator.numa_nodes "$(find /sys/devices/system/node -maxdepth 1 -type d -name 'node[0-9]*' 2>/dev/null | wc -l | tr -d ' ')"
 emit accelerator.rdma_devices "$(find /sys/class/infiniband -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
 emit accelerator.cpu_features "$(flags=$(awk -F: '/^(flags|Features)/ {print $2; exit}' /proc/cpuinfo 2>/dev/null); for feature in avx2 avx512f amx_tile sve; do printf '%s' "$flags" | grep -qw "$feature" && printf '%s ' "$feature"; done)"
@@ -141,7 +152,7 @@ pub struct InspectArgs {
     /// Seconds to run each bandwidth measurement
     #[arg(long, default_value_t = 5, requires = "bandwidth")]
     bandwidth_duration: u8,
-    /// Actively measure NVIDIA GPU-to-GPU P2P bandwidth (temporarily loads all GPUs)
+    /// Actively measure NVIDIA or Moore Threads GPU-to-GPU P2P bandwidth
     #[arg(long)]
     gpu_bandwidth: bool,
     /// Only show these comma-separated sections
@@ -200,12 +211,25 @@ pub fn inspect(args: InspectArgs, use_password: bool, json: bool) -> io::Result<
     let result = runtime()?.block_on(async {
         let mut snapshot = collect(&args.target, password.as_deref()).await?;
         if args.gpu_bandwidth {
-            active_progress.set_message(format!(
-                "Inspecting {} · measuring GPU-to-GPU P2P bandwidth",
-                args.target
-            ));
-            let metrics = super::gpu::measure_nvidia_p2p(&args.target, password.as_deref()).await?;
-            snapshot.values.insert("gpu_bandwidth".into(), metrics);
+            if let Some(peer) = args.peer.as_deref() {
+                active_progress.set_message(format!(
+                    "Inspecting {} <-> {} · measuring GPU P2P bandwidth on both hosts",
+                    args.target, peer
+                ));
+                let (mut local, mut remote) = tokio::try_join!(
+                    super::gpu::measure_gpu_p2p(&args.target, password.as_deref()),
+                    super::gpu::measure_gpu_p2p(peer, password.as_deref())
+                )?;
+                local.insert("host".into(), args.target.clone());
+                remote.insert("host".into(), peer.to_owned());
+                snapshot.values.insert("gpu_bandwidth_local".into(), local);
+                snapshot.values.insert("gpu_bandwidth_peer".into(), remote);
+            } else {
+                let mut metrics =
+                    super::gpu::measure_gpu_p2p(&args.target, password.as_deref()).await?;
+                metrics.insert("host".into(), args.target.clone());
+                snapshot.values.insert("gpu_bandwidth".into(), metrics);
+            }
         }
         let peer = match args.peer.as_deref() {
             Some(peer) => {
