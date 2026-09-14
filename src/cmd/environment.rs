@@ -105,6 +105,38 @@ emit_if accelerator.hygon_dcu_bus_ids "$(printf '%s\n' "$hygon_hw" | awk '/^[0-9
 emit_if accelerator.hygon_dcu_firmware "$(printf '%s\n' "$hygon_fw" | awk -F: '/HCU\[0\]/ && /Firmware Version/ {name=$2; sub(/[[:space:]]*Firmware Version[[:space:]]*$/, "", name); value=$NF; gsub(/^[[:space:]]+|[[:space:]]+$/, "", name); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); printf "%s%s=%s", separator, name, value; separator=","}')"
 emit_if accelerator.dtk "$(for file in /opt/dtk/.info/version /opt/dtk/.info/version-dev /opt/hygondtk/.info/version; do [ -r "$file" ] && { head -n 1 "$file"; break; }; done)"
 emit_if accelerator.hip "$(hipconfig_bin=$(command -v hipconfig 2>/dev/null || true); if [ -z "$hipconfig_bin" ]; then for candidate in /opt/dtk/bin/hipconfig /opt/dtk/hip/bin/hipconfig /opt/dtk-*/hip/bin/hipconfig /opt/hygondtk/bin/hipconfig /opt/hygondtk/hip/bin/hipconfig; do [ -x "$candidate" ] && { hipconfig_bin="$candidate"; break; }; done; fi; if [ -n "$hipconfig_bin" ]; then $hipconfig_bin --version 2>/dev/null | head -n 1; elif command -v hipcc >/dev/null 2>&1; then hipcc --version 2>/dev/null | sed -n '/HIP version/ {p;q;}'; fi)"
+if [ -n "$hy_smi" ]; then
+  hygon_buses=$(printf '%s\n' "$hygon_hw" | awk '/^[0-9]+[[:space:]]+[0-9A-Fa-f]+[[:space:]]+[0-9A-Fa-f]+/ {print $NF}')
+  gpu_index=0
+  pcie_links=""
+  gpu_numa=""
+  for bus in $hygon_buses; do
+    case "$bus" in ????\:??\:??.?) pci="$bus" ;; *) pci="0000:$bus" ;; esac
+    sys="/sys/bus/pci/devices/$pci"
+    current_speed=$(cat "$sys/current_link_speed" 2>/dev/null)
+    current_width=$(cat "$sys/current_link_width" 2>/dev/null)
+    max_speed=$(cat "$sys/max_link_speed" 2>/dev/null)
+    max_width=$(cat "$sys/max_link_width" 2>/dev/null)
+    numa=$(cat "$sys/numa_node" 2>/dev/null)
+    pcie_links="${pcie_links}${pcie_links:+; }DCU${gpu_index}=${pci} ${current_speed:-unknown} x${current_width:-?} (max ${max_speed:-unknown} x${max_width:-?})"
+    [ "${numa:--1}" -ge 0 ] 2>/dev/null && gpu_numa="${gpu_numa}${gpu_numa:+, }DCU${gpu_index}=NUMA${numa}"
+    gpu_index=$((gpu_index + 1))
+  done
+  emit_if gpu_interconnect.pcie_links "$pcie_links"
+  emit_if gpu_interconnect.gpu_numa "$gpu_numa"
+  xgmi_links=$(for p in /sys/class/kfd/kfd/topology/nodes/*/io_links/*/properties; do [ -r "$p" ] && awk '$1=="type" && $2==11 {print 1}' "$p"; done 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${xgmi_links:-0}" -gt 0 ] 2>/dev/null; then
+    emit gpu_interconnect.fabric_topology xgmi-fabric
+    emit gpu_interconnect.fabric_switch unknown
+    emit gpu_interconnect.fabric_switch_status not-detected
+    emit gpu_interconnect.xgmi_links "$xgmi_links directed links discovered"
+  else
+    emit gpu_interconnect.fabric_topology unknown
+    emit gpu_interconnect.fabric_switch unknown
+    emit gpu_interconnect.fabric_switch_status probe-unavailable
+  fi
+  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libamdhip64; then printf 'available via built-in HIP Runtime API probe'; else printf 'unavailable (python3 and libamdhip64 are required)'; fi)"
+fi
 if command -v npu-smi >/dev/null 2>&1; then
   ascend_list="$(npu-smi info -l 2>/dev/null)"
   ascend_id="$(printf '%s\n' "$ascend_list" | sed -n 's/.*NPU ID[^:]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)"

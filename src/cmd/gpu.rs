@@ -4,15 +4,19 @@ use std::io;
 
 const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, shutil, subprocess, time
 if shutil.which("nvidia-smi"):
-    vendor, prefix = "NVIDIA", "cu"
+    vendor, prefix, runtime_api = "NVIDIA", "cu", False
     library = ctypes.util.find_library("cuda") or "libcuda.so.1"
     topology_command = ["nvidia-smi", "topo", "-m"]
 elif shutil.which("mthreads-gmi"):
-    vendor, prefix = "Moore Threads", "mu"
+    vendor, prefix, runtime_api = "Moore Threads", "mu", False
     library = ctypes.util.find_library("musa") or "libmusa.so.1"
     topology_command = ["mthreads-gmi", "topo", "-mg"]
+elif shutil.which("hy-smi"):
+    vendor, prefix, runtime_api = "Hygon DCU", "hip", True
+    library = ctypes.util.find_library("amdhip64") or "libamdhip64.so"
+    topology_command = []
 else:
-    raise RuntimeError("no supported NVIDIA or Moore Threads accelerator was detected")
+    raise RuntimeError("no supported NVIDIA, Moore Threads, or Hygon accelerator was detected")
 driver = ctypes.CDLL(library)
 
 def call(name, *args):
@@ -20,25 +24,33 @@ def call(name, *args):
     if code != 0:
         raise RuntimeError(f"{prefix + name} failed with driver error {code}")
 
-call("Init", 0)
 count = ctypes.c_int()
-call("DeviceGetCount", ctypes.byref(count))
+if runtime_api:
+    call("Init", 0)
+    call("GetDeviceCount", ctypes.byref(count))
+else:
+    call("Init", 0)
+    call("DeviceGetCount", ctypes.byref(count))
 if count.value < 2:
-    raise RuntimeError("at least two NVIDIA GPUs are required")
+    raise RuntimeError("at least two accelerator devices are required")
 
 contexts = []
 devices = []
 for gpu in range(count.value):
-    device = ctypes.c_int()
-    context = ctypes.c_void_p()
-    call("DeviceGet", ctypes.byref(device), gpu)
-    call("DevicePrimaryCtxRetain", ctypes.byref(context), device)
-    devices.append(device)
-    contexts.append(context)
+    if runtime_api:
+        devices.append(gpu)
+        contexts.append(gpu)
+    else:
+        device = ctypes.c_int()
+        context = ctypes.c_void_p()
+        call("DeviceGet", ctypes.byref(device), gpu)
+        call("DevicePrimaryCtxRetain", ctypes.byref(context), device)
+        devices.append(device)
+        contexts.append(context)
 
 paths = {}
 try:
-    topo = subprocess.check_output(topology_command, text=True, stderr=subprocess.DEVNULL)
+    topo = subprocess.check_output(topology_command, text=True, stderr=subprocess.DEVNULL) if topology_command else ""
     for line in topo.splitlines():
         columns = line.split()
         if columns and columns[0].startswith("GPU") and columns[0][3:].isdigit():
@@ -52,15 +64,18 @@ except Exception:
 size = 256 * 1024 * 1024
 iterations = 8
 
+def select(context):
+    call("SetDevice" if runtime_api else "CtxSetCurrent", context)
+
 def allocate(context):
-    call("CtxSetCurrent", context)
-    pointer = ctypes.c_uint64()
-    call("MemAlloc_v2", ctypes.byref(pointer), ctypes.c_size_t(size))
+    select(context)
+    pointer = ctypes.c_void_p() if runtime_api else ctypes.c_uint64()
+    call("Malloc" if runtime_api else "MemAlloc_v2", ctypes.byref(pointer), ctypes.c_size_t(size))
     return pointer
 
 def free(context, pointer):
-    call("CtxSetCurrent", context)
-    call("MemFree_v2", pointer)
+    select(context)
+    call("Free" if runtime_api else "MemFree_v2", pointer)
 
 def bandwidth(source, destination):
     can_access = ctypes.c_int()
@@ -71,17 +86,18 @@ def bandwidth(source, destination):
     src = allocate(src_ctx)
     dst = allocate(dst_ctx)
     try:
-        call("CtxSetCurrent", dst_ctx)
-        code = getattr(driver, prefix + "CtxEnablePeerAccess")(src_ctx, 0)
+        select(dst_ctx)
+        enable = "DeviceEnablePeerAccess" if runtime_api else "CtxEnablePeerAccess"
+        code = getattr(driver, prefix + enable)(src_ctx, 0)
         if code not in (0, 704):
-            raise RuntimeError(f"{prefix}CtxEnablePeerAccess failed with driver error {code}")
+            raise RuntimeError(f"{prefix + enable} failed with driver error {code}")
         for _ in range(2):
-            call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
-        call("CtxSynchronize")
+            call("MemcpyPeer", dst, destination, src, source, ctypes.c_size_t(size)) if runtime_api else call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
+        call("DeviceSynchronize" if runtime_api else "CtxSynchronize")
         started = time.perf_counter()
         for _ in range(iterations):
-            call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
-        call("CtxSynchronize")
+            call("MemcpyPeer", dst, destination, src, source, ctypes.c_size_t(size)) if runtime_api else call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
+        call("DeviceSynchronize" if runtime_api else "CtxSynchronize")
         elapsed = time.perf_counter() - started
         return size * iterations / elapsed / 1e9
     finally:
@@ -98,7 +114,7 @@ for left in range(count.value):
             print(f"pair_{left}_{right}\tunavailable (P2P disabled)")
         else:
             values.extend((forward, reverse))
-            path = paths.get((left, right), "unknown path")
+            path = paths.get((left, right), "P2P path undetermined")
             print(f"pair_{left}_{right}\t{path} · {forward:.2f} / {reverse:.2f} GB/s (forward / reverse)")
 if values:
     print(f"summary\t{len(values)//2} pairs · min {min(values):.2f} · avg {sum(values)/len(values):.2f} · max {max(values):.2f} GB/s")

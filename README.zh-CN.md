@@ -346,8 +346,8 @@ NVLink/PCIe 路径汇总、NVLink 活跃链路和标称容量，以及 RDMA 网�
 标称 NVLink 容量不会伪装成实测卡间带宽；缺少 `nvbandwidth` 或 CUDA Samples 时会明确标注。
 互联结构会明确区分 `switched`、`direct-mesh` 和 `unknown`；确认无交换芯片时显示
 `none`，探针无法判断时才显示 `unknown`，不会用 `unavailable` 混淆两种情况。
-显式传入 `--gpu-bandwidth` 会通过 NVIDIA CUDA 或摩尔线程 MUSA Driver API
-逐对测量 GPU P2P 单向正反带宽，
+显式传入 `--gpu-bandwidth` 会通过 NVIDIA CUDA、摩尔线程 MUSA Driver API
+或海光 HIP Runtime API 逐对测量 GPU P2P 单向正反带宽，
 无需 PyTorch、CUDA Toolkit 或下载额外程序。该操作会短时占用所有可见 GPU，请仅在空闲节点运行。
 与 `--peer` 一起使用时会并发测量两端节点的卡内带宽，再测量节点间 TCP/RDMA，
 一次获得分布式训练通信链路的完整结果。

@@ -377,8 +377,8 @@ NVLink capacity is never presented as measured GPU-to-GPU bandwidth; missing ben
 tooling is reported explicitly.
 Fabric inspection distinguishes `switched`, `direct-mesh`, and `unknown`. A confirmed
 absence is reported as `none`; an inconclusive probe is reported as `unknown`.
-Pass `--gpu-bandwidth` to actively measure both directions of every NVIDIA or Moore Threads
-GPU P2P pair through the CUDA or MUSA Driver API, without PyTorch, a development toolkit,
+Pass `--gpu-bandwidth` to actively measure both directions of every NVIDIA, Moore Threads,
+or Hygon DCU P2P pair through the CUDA, MUSA, or HIP API, without PyTorch, a development toolkit,
 or downloaded executables.
 This briefly loads every visible GPU and should only be used on idle nodes.
 With `--peer`, both hosts' local P2P matrices are measured concurrently before the

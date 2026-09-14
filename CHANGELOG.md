@@ -12,6 +12,7 @@ All notable changes to binport are documented here. The format follows
 - Inspect NVIDIA GPU PCIe negotiation, NUMA placement, GPU interconnect topology, NVLink health/capacity, and GPU-to-RNIC locality without requiring CUDA development tools.
 - Measure every NVIDIA or Moore Threads GPU P2P pair in both directions through the CUDA/MUSA Driver API with no framework or development-toolkit dependency.
 - Distinguish switched and direct-mesh GPU fabrics, enumerate driver-bound NVSwitch devices, and separate confirmed absence from an unknown probe result.
+- Inspect Hygon DCU PCIe/NUMA/XGMI topology and measure every available P2P pair through the HIP runtime without requiring a framework or development toolkit.
 
 ## [0.7.0] - 2026-09-11
 
