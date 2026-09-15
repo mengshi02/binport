@@ -140,7 +140,7 @@ def peer_access(source, destination):
     call("DeviceCanAccessPeer", ctypes.byref(can_access), devices[destination], devices[source])
     return bool(can_access.value)
 
-def bandwidth(source, destination, barrier=None):
+def bandwidth(source, destination, barrier=None, enable_peer=True):
     if not peer_access(source, destination):
         return None
     src_ctx, dst_ctx = contexts[source], contexts[destination]
@@ -148,10 +148,11 @@ def bandwidth(source, destination, barrier=None):
     dst = allocate(dst_ctx)
     try:
         select(dst_ctx)
-        enable = "DeviceEnablePeerAccess" if runtime_api else "CtxEnablePeerAccess"
-        code = getattr(driver, prefix + enable)(src_ctx, 0)
-        if code not in (0, 704):
-            raise RuntimeError(f"{prefix + enable} failed with driver error {code}")
+        if enable_peer:
+            enable = "DeviceEnablePeerAccess" if runtime_api else "CtxEnablePeerAccess"
+            code = getattr(driver, prefix + enable)(src_ctx, 0)
+            if code not in (0, 704):
+                raise RuntimeError(f"{prefix + enable} failed with driver error {code}")
         for _ in range(2):
             call("MemcpyPeer", dst, destination, src, source, ctypes.c_size_t(size)) if runtime_api else call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
         call("DeviceSynchronize" if runtime_api else "CtxSynchronize")
@@ -188,38 +189,9 @@ def concurrent_measure(pairs):
     pairs = [(source, destination) for source, destination in pairs if peer_access(source, destination)]
     if not pairs:
         return None
-    if runtime_api:
-        transfers = []
-        try:
-            for source, destination in pairs:
-                src_ctx, dst_ctx = contexts[source], contexts[destination]
-                src, dst = allocate(src_ctx), allocate(dst_ctx)
-                select(dst_ctx)
-                stream = ctypes.c_void_p()
-                call("StreamCreate", ctypes.byref(stream))
-                transfers.append((source, destination, src_ctx, dst_ctx, src, dst, stream))
-            for source, destination, _, _, src, dst, stream in transfers:
-                call("MemcpyPeerAsync", dst, destination, src, source, ctypes.c_size_t(size), stream)
-            for *_, stream in transfers:
-                call("StreamSynchronize", stream)
-            started = time.perf_counter()
-            for _ in range(iterations):
-                for source, destination, _, _, src, dst, stream in transfers:
-                    call("MemcpyPeerAsync", dst, destination, src, source, ctypes.c_size_t(size), stream)
-            for *_, stream in transfers:
-                call("StreamSynchronize", stream)
-            elapsed = time.perf_counter() - started
-            aggregate = len(transfers) * size * iterations / elapsed / 1e9
-            return len(transfers), aggregate, aggregate / len(transfers), None
-        finally:
-            for _, _, src_ctx, dst_ctx, src, dst, stream in transfers:
-                select(dst_ctx)
-                call("StreamDestroy", stream)
-                free(dst_ctx, dst)
-                free(src_ctx, src)
     barrier = threading.Barrier(len(pairs))
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(pairs)) as executor:
-        results = list(executor.map(lambda pair: bandwidth(pair[0], pair[1], barrier), pairs))
+        results = list(executor.map(lambda pair: bandwidth(pair[0], pair[1], barrier, False), pairs))
     rates = [result[0] for result in results if result]
     elapsed = max(result[1] for result in results if result)
     aggregate = len(rates) * size * iterations / elapsed / 1e9
@@ -235,12 +207,22 @@ def concurrent_bandwidth(name, pairs):
     print(f"concurrent_{name}\t{streams} streams · aggregate {aggregate:.2f} GB/s · avg {average:.2f} GB/s/stream{minimum_text}")
 
 concurrent_bandwidth("disjoint_pairs", [(gpu, gpu + 1) for gpu in range(0, count.value - 1, 2)])
-concurrent_bandwidth("one_to_all", [(0, gpu) for gpu in range(1, count.value)])
-rounds = [concurrent_measure([(source, (source + offset) % count.value) for source in range(count.value)]) for offset in range(1, count.value)]
+if runtime_api:
+    print("concurrent_one_to_all\tunavailable (disabled by HIP safe mode to avoid shared-device driver stalls)")
+else:
+    concurrent_bandwidth("one_to_all", [(0, gpu) for gpu in range(1, count.value)])
+
+players = list(range(count.value))
+pair_rounds = []
+for _ in range(count.value - 1):
+    pairs = [(players[index], players[-1 - index]) for index in range(count.value // 2)]
+    pair_rounds.extend((pairs, [(destination, source) for source, destination in pairs]))
+    players = [players[0], players[-1], *players[1:-1]]
+rounds = [concurrent_measure(pairs) for pairs in pair_rounds]
 rounds = [result for result in rounds if result]
 if rounds:
     aggregates = [result[1] for result in rounds]
-    print(f"concurrent_all_to_all\t{count.value * (count.value - 1)} logical streams in {len(rounds)} rounds · {count.value} concurrent/round · avg aggregate {sum(aggregates)/len(aggregates):.2f} GB/s · min/max {min(aggregates):.2f}/{max(aggregates):.2f}")
+    print(f"concurrent_all_to_all\t{count.value * (count.value - 1)} logical streams in {len(rounds)} conflict-free rounds · {count.value // 2} concurrent/round · avg aggregate {sum(aggregates)/len(aggregates):.2f} GB/s · min/max {min(aggregates):.2f}/{max(aggregates):.2f}")
 else:
     print("concurrent_all_to_all\tunavailable (no supported P2P streams)")
 "#;
