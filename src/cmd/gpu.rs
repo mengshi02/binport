@@ -2,7 +2,11 @@ use super::native_exec::capture_remote;
 use std::collections::BTreeMap;
 use std::io;
 
-const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, shutil, subprocess, time
+const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, os, shutil, subprocess, time
+hip_library = ctypes.util.find_library("amdhip64")
+hygon_smi = shutil.which("hy-smi") or next((p for p in (
+    "/opt/hyhal/bin/hy-smi", "/opt/dtk/bin/hy-smi", "/opt/hygondtk/bin/hy-smi"
+) if os.access(p, os.X_OK)), None)
 if shutil.which("nvidia-smi"):
     vendor, prefix, runtime_api = "NVIDIA", "cu", False
     library = ctypes.util.find_library("cuda") or "libcuda.so.1"
@@ -11,9 +15,9 @@ elif shutil.which("mthreads-gmi"):
     vendor, prefix, runtime_api = "Moore Threads", "mu", False
     library = ctypes.util.find_library("musa") or "libmusa.so.1"
     topology_command = ["mthreads-gmi", "topo", "-mg"]
-elif shutil.which("hy-smi"):
+elif hygon_smi or hip_library:
     vendor, prefix, runtime_api = "Hygon DCU", "hip", True
-    library = ctypes.util.find_library("amdhip64") or "libamdhip64.so"
+    library = hip_library or "libamdhip64.so"
     topology_command = []
 else:
     raise RuntimeError("no supported NVIDIA, Moore Threads, or Hygon accelerator was detected")
