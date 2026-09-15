@@ -128,7 +128,7 @@ if [ -n "$hy_smi" ]; then
   if [ "${xgmi_links:-0}" -gt 0 ] 2>/dev/null; then
     emit gpu_interconnect.fabric_topology xgmi-fabric
     emit gpu_interconnect.fabric_switch unknown
-    emit gpu_interconnect.fabric_switch_status not-detected
+    emit gpu_interconnect.fabric_switch_status probe-insufficient
     emit gpu_interconnect.xgmi_peer_routes "$xgmi_links directed KFD routes discovered"
     emit gpu_interconnect.xgmi_physical_links_per_pair "unavailable (not exposed by KFD topology)"
   else

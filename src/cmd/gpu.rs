@@ -95,7 +95,12 @@ if runtime_api:
     kfd_nodes = []
     for node_path in glob.glob("/sys/class/kfd/kfd/topology/nodes/[0-9]*"):
         props = properties(os.path.join(node_path, "properties"))
-        if int(props.get("gpu_id", "0")) != 0:
+        try:
+            with open(os.path.join(node_path, "gpu_id")) as stream:
+                gpu_id = int(stream.read().strip())
+        except (OSError, ValueError):
+            gpu_id = int(props.get("gpu_id", "0"))
+        if gpu_id != 0:
             kfd_nodes.append((int(props.get("location_id", "0")), int(os.path.basename(node_path))))
     kfd_nodes.sort()
     node_to_gpu = {node: gpu for gpu, (_, node) in enumerate(kfd_nodes)}
