@@ -188,6 +188,35 @@ def concurrent_measure(pairs):
     pairs = [(source, destination) for source, destination in pairs if peer_access(source, destination)]
     if not pairs:
         return None
+    if runtime_api:
+        transfers = []
+        try:
+            for source, destination in pairs:
+                src_ctx, dst_ctx = contexts[source], contexts[destination]
+                src, dst = allocate(src_ctx), allocate(dst_ctx)
+                select(dst_ctx)
+                stream = ctypes.c_void_p()
+                call("StreamCreate", ctypes.byref(stream))
+                transfers.append((source, destination, src_ctx, dst_ctx, src, dst, stream))
+            for source, destination, _, _, src, dst, stream in transfers:
+                call("MemcpyPeerAsync", dst, destination, src, source, ctypes.c_size_t(size), stream)
+            for *_, stream in transfers:
+                call("StreamSynchronize", stream)
+            started = time.perf_counter()
+            for _ in range(iterations):
+                for source, destination, _, _, src, dst, stream in transfers:
+                    call("MemcpyPeerAsync", dst, destination, src, source, ctypes.c_size_t(size), stream)
+            for *_, stream in transfers:
+                call("StreamSynchronize", stream)
+            elapsed = time.perf_counter() - started
+            aggregate = len(transfers) * size * iterations / elapsed / 1e9
+            return len(transfers), aggregate, aggregate / len(transfers), None
+        finally:
+            for _, _, src_ctx, dst_ctx, src, dst, stream in transfers:
+                select(dst_ctx)
+                call("StreamDestroy", stream)
+                free(dst_ctx, dst)
+                free(src_ctx, src)
     barrier = threading.Barrier(len(pairs))
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(pairs)) as executor:
         results = list(executor.map(lambda pair: bandwidth(pair[0], pair[1], barrier), pairs))
@@ -202,7 +231,8 @@ def concurrent_bandwidth(name, pairs):
         print(f"concurrent_{name}\tunavailable (no supported P2P streams)")
         return
     streams, aggregate, average, minimum = result
-    print(f"concurrent_{name}\t{streams} streams · aggregate {aggregate:.2f} GB/s · avg {average:.2f} GB/s/stream · min {minimum:.2f}")
+    minimum_text = f" · min {minimum:.2f}" if minimum is not None else ""
+    print(f"concurrent_{name}\t{streams} streams · aggregate {aggregate:.2f} GB/s · avg {average:.2f} GB/s/stream{minimum_text}")
 
 concurrent_bandwidth("disjoint_pairs", [(gpu, gpu + 1) for gpu in range(0, count.value - 1, 2)])
 concurrent_bandwidth("one_to_all", [(0, gpu) for gpu in range(1, count.value)])
