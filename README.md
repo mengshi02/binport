@@ -380,6 +380,8 @@ absence is reported as `none`; an inconclusive probe is reported as `unknown`.
 Pass `--gpu-bandwidth` to actively measure both directions of every NVIDIA, Moore Threads,
 or Hygon DCU P2P pair through the CUDA, MUSA, or HIP API, without PyTorch, a development toolkit,
 or downloaded executables.
+The same run also measures concurrent disjoint pairs, one-to-all fan-out, and a round-based
+All-to-All matrix, reporting aggregate and per-stream bandwidth to expose shared fabric limits.
 This briefly loads every visible GPU and should only be used on idle nodes.
 With `--peer`, both hosts' local P2P matrices are measured concurrently before the
 inter-node TCP/RDMA test, producing one end-to-end distributed-training report.

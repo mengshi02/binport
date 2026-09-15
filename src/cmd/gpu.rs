@@ -2,7 +2,7 @@ use super::native_exec::capture_remote;
 use std::collections::BTreeMap;
 use std::io;
 
-const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, glob, os, shutil, subprocess, time
+const GPU_P2P_BENCHMARK: &str = r#"import concurrent.futures, ctypes, ctypes.util, glob, os, shutil, subprocess, threading, time
 hip_library = ctypes.util.find_library("amdhip64")
 hygon_smi = shutil.which("hy-smi") or next((p for p in (
     "/opt/hyhal/bin/hy-smi", "/opt/dtk/bin/hy-smi", "/opt/hygondtk/bin/hy-smi"
@@ -135,10 +135,13 @@ def free(context, pointer):
     select(context)
     call("Free" if runtime_api else "MemFree_v2", pointer)
 
-def bandwidth(source, destination):
+def peer_access(source, destination):
     can_access = ctypes.c_int()
     call("DeviceCanAccessPeer", ctypes.byref(can_access), devices[destination], devices[source])
-    if not can_access.value:
+    return bool(can_access.value)
+
+def bandwidth(source, destination, barrier=None):
+    if not peer_access(source, destination):
         return None
     src_ctx, dst_ctx = contexts[source], contexts[destination]
     src = allocate(src_ctx)
@@ -152,12 +155,14 @@ def bandwidth(source, destination):
         for _ in range(2):
             call("MemcpyPeer", dst, destination, src, source, ctypes.c_size_t(size)) if runtime_api else call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
         call("DeviceSynchronize" if runtime_api else "CtxSynchronize")
+        if barrier:
+            barrier.wait(timeout=60)
         started = time.perf_counter()
         for _ in range(iterations):
             call("MemcpyPeer", dst, destination, src, source, ctypes.c_size_t(size)) if runtime_api else call("MemcpyPeer", dst, dst_ctx, src, src_ctx, ctypes.c_size_t(size))
         call("DeviceSynchronize" if runtime_api else "CtxSynchronize")
         elapsed = time.perf_counter() - started
-        return size * iterations / elapsed / 1e9
+        return size * iterations / elapsed / 1e9, elapsed
     finally:
         free(dst_ctx, dst)
         free(src_ctx, src)
@@ -171,11 +176,43 @@ for left in range(count.value):
         if forward is None or reverse is None:
             print(f"pair_{left}_{right}\tunavailable (P2P disabled)")
         else:
-            values.extend((forward, reverse))
+            forward_rate, _ = forward
+            reverse_rate, _ = reverse
+            values.extend((forward_rate, reverse_rate))
             path = paths.get((left, right), "HIP P2P (physical route undetermined)" if runtime_api else "P2P path undetermined")
-            print(f"pair_{left}_{right}\t{path} · {forward:.2f} / {reverse:.2f} GB/s (forward / reverse)")
+            print(f"pair_{left}_{right}\t{path} · {forward_rate:.2f} / {reverse_rate:.2f} GB/s (forward / reverse)")
 if values:
     print(f"summary\t{len(values)//2} pairs · min {min(values):.2f} · avg {sum(values)/len(values):.2f} · max {max(values):.2f} GB/s")
+
+def concurrent_measure(pairs):
+    pairs = [(source, destination) for source, destination in pairs if peer_access(source, destination)]
+    if not pairs:
+        return None
+    barrier = threading.Barrier(len(pairs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(pairs)) as executor:
+        results = list(executor.map(lambda pair: bandwidth(pair[0], pair[1], barrier), pairs))
+    rates = [result[0] for result in results if result]
+    elapsed = max(result[1] for result in results if result)
+    aggregate = len(rates) * size * iterations / elapsed / 1e9
+    return len(rates), aggregate, sum(rates) / len(rates), min(rates)
+
+def concurrent_bandwidth(name, pairs):
+    result = concurrent_measure(pairs)
+    if not result:
+        print(f"concurrent_{name}\tunavailable (no supported P2P streams)")
+        return
+    streams, aggregate, average, minimum = result
+    print(f"concurrent_{name}\t{streams} streams · aggregate {aggregate:.2f} GB/s · avg {average:.2f} GB/s/stream · min {minimum:.2f}")
+
+concurrent_bandwidth("disjoint_pairs", [(gpu, gpu + 1) for gpu in range(0, count.value - 1, 2)])
+concurrent_bandwidth("one_to_all", [(0, gpu) for gpu in range(1, count.value)])
+rounds = [concurrent_measure([(source, (source + offset) % count.value) for source in range(count.value)]) for offset in range(1, count.value)]
+rounds = [result for result in rounds if result]
+if rounds:
+    aggregates = [result[1] for result in rounds]
+    print(f"concurrent_all_to_all\t{count.value * (count.value - 1)} logical streams in {len(rounds)} rounds · {count.value} concurrent/round · avg aggregate {sum(aggregates)/len(aggregates):.2f} GB/s · min/max {min(aggregates):.2f}/{max(aggregates):.2f}")
+else:
+    print("concurrent_all_to_all\tunavailable (no supported P2P streams)")
 "#;
 
 pub async fn measure_gpu_p2p(
