@@ -2,11 +2,23 @@ use super::native_exec::capture_remote;
 use std::collections::BTreeMap;
 use std::io;
 
-const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, os, shutil, subprocess, time
+const GPU_P2P_BENCHMARK: &str = r#"import ctypes, ctypes.util, glob, os, shutil, subprocess, time
 hip_library = ctypes.util.find_library("amdhip64")
 hygon_smi = shutil.which("hy-smi") or next((p for p in (
     "/opt/hyhal/bin/hy-smi", "/opt/dtk/bin/hy-smi", "/opt/hygondtk/bin/hy-smi"
 ) if os.access(p, os.X_OK)), None)
+if not hip_library:
+    hip_library = next((p for pattern in (
+        "/opt/dtk*/lib/libamdhip64.so*",
+        "/opt/dtk*/lib/*/libamdhip64.so*",
+        "/opt/dtk*/hip/lib/libamdhip64.so*",
+        "/opt/dtk*/hip/lib/*/libamdhip64.so*",
+        "/opt/dtk*/lib64/libamdhip64.so*",
+        "/opt/hygondtk*/lib/libamdhip64.so*",
+        "/opt/hygondtk*/lib/*/libamdhip64.so*",
+        "/opt/hygondtk*/hip/lib/libamdhip64.so*",
+        "/opt/hyhal/lib/libamdhip64.so*",
+    ) for p in glob.glob(pattern) if os.path.isfile(p)), None)
 if shutil.which("nvidia-smi"):
     vendor, prefix, runtime_api = "NVIDIA", "cu", False
     library = ctypes.util.find_library("cuda") or "libcuda.so.1"
@@ -17,7 +29,9 @@ elif shutil.which("mthreads-gmi"):
     topology_command = ["mthreads-gmi", "topo", "-mg"]
 elif hygon_smi or hip_library:
     vendor, prefix, runtime_api = "Hygon DCU", "hip", True
-    library = hip_library or "libamdhip64.so"
+    if not hip_library:
+        raise RuntimeError("Hygon DCU detected, but libamdhip64.so was not found under the DTK installation")
+    library = hip_library
     topology_command = []
 else:
     raise RuntimeError("no supported NVIDIA, Moore Threads, or Hygon accelerator was detected")
