@@ -123,7 +123,7 @@ def bandwidth(source, destination):
         free(src_ctx, src)
 
 values = []
-print(f"driver_api\t{vendor} {prefix}* Driver API")
+print(f"driver_api\t{vendor} {prefix}* {'Runtime' if runtime_api else 'Driver'} API")
 for left in range(count.value):
     for right in range(left + 1, count.value):
         forward = bandwidth(left, right)
@@ -132,7 +132,7 @@ for left in range(count.value):
             print(f"pair_{left}_{right}\tunavailable (P2P disabled)")
         else:
             values.extend((forward, reverse))
-            path = paths.get((left, right), "P2P path undetermined")
+            path = paths.get((left, right), "HIP P2P (physical route undetermined)" if runtime_api else "P2P path undetermined")
             print(f"pair_{left}_{right}\t{path} · {forward:.2f} / {reverse:.2f} GB/s (forward / reverse)")
 if values:
     print(f"summary\t{len(values)//2} pairs · min {min(values):.2f} · avg {sum(values)/len(values):.2f} · max {max(values):.2f} GB/s")

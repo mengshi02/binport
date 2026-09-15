@@ -135,7 +135,13 @@ if [ -n "$hy_smi" ]; then
     emit gpu_interconnect.fabric_switch unknown
     emit gpu_interconnect.fabric_switch_status probe-unavailable
   fi
-  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libamdhip64; then printf 'available via built-in HIP Runtime API probe'; else printf 'unavailable (python3 and libamdhip64 are required)'; fi)"
+  hip_runtime="$(ldconfig -p 2>/dev/null | awk '/libamdhip64\.so/{print $NF; exit}')"
+  if [ -z "$hip_runtime" ]; then
+    for candidate in /opt/dtk*/lib/libamdhip64.so* /opt/dtk*/lib/*/libamdhip64.so* /opt/dtk*/hip/lib/libamdhip64.so* /opt/dtk*/hip/lib/*/libamdhip64.so* /opt/dtk*/lib64/libamdhip64.so* /opt/hygondtk*/lib/libamdhip64.so* /opt/hygondtk*/lib/*/libamdhip64.so* /opt/hygondtk*/hip/lib/libamdhip64.so* /opt/hyhal/lib/libamdhip64.so*; do
+      [ -r "$candidate" ] && { hip_runtime="$candidate"; break; }
+    done
+  fi
+  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1 && [ -n "$hip_runtime" ]; then printf 'available via built-in HIP Runtime API probe'; else printf 'unavailable (python3 and libamdhip64 are required)'; fi)"
 fi
 if command -v npu-smi >/dev/null 2>&1; then
   ascend_list="$(npu-smi info -l 2>/dev/null)"
