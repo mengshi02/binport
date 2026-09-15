@@ -79,6 +79,41 @@ try:
 except Exception:
     pass
 
+if runtime_api:
+    def properties(path):
+        result = {}
+        try:
+            with open(path) as stream:
+                for line in stream:
+                    columns = line.split()
+                    if len(columns) >= 2:
+                        result[columns[0]] = columns[1]
+        except OSError:
+            pass
+        return result
+
+    kfd_nodes = []
+    for node_path in glob.glob("/sys/class/kfd/kfd/topology/nodes/[0-9]*"):
+        props = properties(os.path.join(node_path, "properties"))
+        if int(props.get("gpu_id", "0")) != 0:
+            kfd_nodes.append((int(props.get("location_id", "0")), int(os.path.basename(node_path))))
+    kfd_nodes.sort()
+    node_to_gpu = {node: gpu for gpu, (_, node) in enumerate(kfd_nodes)}
+    kfd_routes = {}
+    for link_path in glob.glob("/sys/class/kfd/kfd/topology/nodes/*/io_links/*/properties"):
+        props = properties(link_path)
+        if props.get("type") != "11":
+            continue
+        source = node_to_gpu.get(int(props.get("node_from", "-1")))
+        destination = node_to_gpu.get(int(props.get("node_to", "-1")))
+        if source is not None and destination is not None:
+            kfd_routes[(source, destination)] = kfd_routes.get((source, destination), 0) + 1
+    for source, destination in kfd_routes:
+        routes = kfd_routes[(source, destination)]
+        reverse = kfd_routes.get((destination, source), 0)
+        route_text = str(routes) if routes == reverse else f"{routes}/{reverse} forward/reverse"
+        paths[(source, destination)] = f"XGMI · {route_text} KFD route(s) · physical link count unavailable"
+
 size = 256 * 1024 * 1024
 iterations = 8
 
