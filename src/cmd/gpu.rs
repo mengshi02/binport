@@ -54,7 +54,10 @@ try:
     driver = ctypes.CDLL(library)
 except OSError as error:
     if vendor == "Huawei Ascend":
-        raise RuntimeError("Ascend NPU detected, but the AscendCL runtime could not be loaded; install CANN Toolkit/NNRT or expose libascendcl.so through LD_LIBRARY_PATH") from error
+        print("driver_api\tHuawei Ascend runtime unavailable")
+        print("status\tunavailable (libascendcl.so could not be loaded)")
+        print("remediation\tinstall a driver-compatible CANN Toolkit/NNRT or Ascend DMI")
+        sys.exit(0)
     raise
 
 if vendor == "Huawei Ascend":
