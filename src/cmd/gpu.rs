@@ -2,8 +2,14 @@ use super::native_exec::capture_remote;
 use std::collections::BTreeMap;
 use std::io;
 
-const GPU_P2P_BENCHMARK: &str = r#"import concurrent.futures, ctypes, ctypes.util, glob, os, shutil, subprocess, threading, time
+const GPU_P2P_BENCHMARK: &str = r#"import concurrent.futures, ctypes, ctypes.util, glob, os, shutil, subprocess, sys, threading, time
 hip_library = ctypes.util.find_library("amdhip64")
+ascend_library = ctypes.util.find_library("ascendcl") or next((p for pattern in (
+    "/usr/local/Ascend/ascend-toolkit/latest/lib64/libascendcl.so*",
+    "/usr/local/Ascend/ascend-toolkit/latest/*/lib64/libascendcl.so*",
+    "/usr/local/Ascend/ascend-toolkit/*/lib64/libascendcl.so*",
+    "/usr/local/Ascend/driver/lib64/driver/libascendcl.so*",
+) for p in glob.glob(pattern) if os.path.isfile(p)), None)
 hygon_smi = shutil.which("hy-smi") or next((p for p in (
     "/opt/hyhal/bin/hy-smi", "/opt/dtk/bin/hy-smi", "/opt/hygondtk/bin/hy-smi"
 ) if os.access(p, os.X_OK)), None)
@@ -33,9 +39,118 @@ elif hygon_smi or hip_library:
         raise RuntimeError("Hygon DCU detected, but libamdhip64.so was not found under the DTK installation")
     library = hip_library
     topology_command = []
+elif shutil.which("npu-smi"):
+    if not ascend_library:
+        raise RuntimeError("Ascend NPU detected, but libascendcl.so was not found under the CANN installation")
+    vendor, prefix, runtime_api = "Huawei Ascend", "aclrt", False
+    library = ascend_library
+    topology_command = []
 else:
-    raise RuntimeError("no supported NVIDIA, Moore Threads, or Hygon accelerator was detected")
+    raise RuntimeError("no supported NVIDIA, Moore Threads, Hygon, or Ascend accelerator was detected")
 driver = ctypes.CDLL(library)
+
+if vendor == "Huawei Ascend":
+    def acl_call(name, *args):
+        code = getattr(driver, name)(*args)
+        if code != 0:
+            raise RuntimeError(f"{name} failed with runtime error {code}")
+
+    acl_call("aclInit", None)
+    count = ctypes.c_uint32()
+    acl_call("aclrtGetDeviceCount", ctypes.byref(count))
+    if count.value < 2:
+        raise RuntimeError("at least two Ascend devices are required")
+    size, iterations = 256 * 1024 * 1024, 8
+
+    def ascend_select(device):
+        acl_call("aclrtSetDevice", ctypes.c_int32(device))
+
+    def ascend_peer_access(source, destination):
+        supported = ctypes.c_int32()
+        acl_call("aclrtDeviceCanAccessPeer", ctypes.byref(supported), ctypes.c_int32(source), ctypes.c_int32(destination))
+        return bool(supported.value)
+
+    for source in range(count.value):
+        ascend_select(source)
+        for destination in range(count.value):
+            if source != destination and ascend_peer_access(source, destination):
+                acl_call("aclrtDeviceEnablePeerAccess", ctypes.c_int32(destination), ctypes.c_uint32(0))
+
+    def ascend_allocate(device):
+        ascend_select(device)
+        pointer = ctypes.c_void_p()
+        acl_call("aclrtMalloc", ctypes.byref(pointer), ctypes.c_size_t(size), ctypes.c_int(3))
+        return pointer
+
+    def ascend_free(device, pointer):
+        ascend_select(device)
+        acl_call("aclrtFree", pointer)
+
+    def ascend_bandwidth(source, destination, barrier=None):
+        if not ascend_peer_access(source, destination):
+            return None
+        src, dst = ascend_allocate(source), ascend_allocate(destination)
+        try:
+            ascend_select(destination)
+            for _ in range(2):
+                acl_call("aclrtMemcpy", dst, ctypes.c_size_t(size), src, ctypes.c_size_t(size), ctypes.c_int(3))
+            acl_call("aclrtSynchronizeDevice")
+            if barrier:
+                barrier.wait(timeout=60)
+            started = time.perf_counter()
+            for _ in range(iterations):
+                acl_call("aclrtMemcpy", dst, ctypes.c_size_t(size), src, ctypes.c_size_t(size), ctypes.c_int(3))
+            acl_call("aclrtSynchronizeDevice")
+            elapsed = time.perf_counter() - started
+            return size * iterations / elapsed / 1e9, elapsed
+        finally:
+            ascend_free(destination, dst)
+            ascend_free(source, src)
+
+    values = []
+    print("driver_api\tHuawei Ascend aclrt* Runtime API")
+    for left in range(count.value):
+        for right in range(left + 1, count.value):
+            forward, reverse = ascend_bandwidth(left, right), ascend_bandwidth(right, left)
+            if forward is None or reverse is None:
+                print(f"pair_{left}_{right}\tunavailable (P2P disabled)")
+            else:
+                forward_rate, reverse_rate = forward[0], reverse[0]
+                values.extend((forward_rate, reverse_rate))
+                print(f"pair_{left}_{right}\tHCCS/PCIe P2P (physical route undetermined) · {forward_rate:.2f} / {reverse_rate:.2f} GB/s (forward / reverse)")
+    if values:
+        print(f"summary\t{len(values)//2} pairs · min {min(values):.2f} · avg {sum(values)/len(values):.2f} · max {max(values):.2f} GB/s")
+
+    def ascend_concurrent(name, pairs, emit=True):
+        pairs = [(source, destination) for source, destination in pairs if ascend_peer_access(source, destination)]
+        if not pairs:
+            if emit:
+                print(f"concurrent_{name}\tunavailable (no supported P2P streams)")
+            return None
+        barrier = threading.Barrier(len(pairs))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pairs)) as executor:
+            results = list(executor.map(lambda pair: ascend_bandwidth(pair[0], pair[1], barrier), pairs))
+        rates = [result[0] for result in results if result]
+        elapsed = max(result[1] for result in results if result)
+        aggregate = len(rates) * size * iterations / elapsed / 1e9
+        if emit:
+            print(f"concurrent_{name}\t{len(rates)} streams · aggregate {aggregate:.2f} GB/s · avg {sum(rates)/len(rates):.2f} GB/s/stream · min {min(rates):.2f}")
+        return aggregate
+
+    ascend_concurrent("disjoint_pairs", [(device, device + 1) for device in range(0, count.value - 1, 2)])
+    ascend_concurrent("one_to_all", [(0, device) for device in range(1, count.value)])
+    players, rounds = list(range(count.value)), []
+    for _ in range(count.value - 1):
+        pairs = [(players[index], players[-1 - index]) for index in range(count.value // 2)]
+        for direction in (pairs, [(destination, source) for source, destination in pairs]):
+            result = ascend_concurrent("round", direction, False)
+            if result is not None:
+                rounds.append(result)
+        players = [players[0], players[-1], *players[1:-1]]
+    if rounds:
+        print(f"concurrent_all_to_all\t{count.value * (count.value - 1)} logical streams in {len(rounds)} conflict-free rounds · {count.value // 2} concurrent/round · avg aggregate {sum(rounds)/len(rounds):.2f} GB/s · min/max {min(rounds):.2f}/{max(rounds):.2f}")
+    acl_call("aclFinalize")
+    sys.exit(0)
 
 def call(name, *args):
     code = getattr(driver, prefix + name)(*args)

@@ -155,6 +155,18 @@ emit_if accelerator.ascend_chips "$(printf '%s\n' "$ascend_list" | awk -F: '/Chi
 emit_if accelerator.ascend_firmware "$(printf '%s\n' "$ascend_board" | sed -n 's/.*Firmware Version[^:]*:[[:space:]]*//p' | head -n 1)"
 emit_if accelerator.ascend_driver "$(for file in /usr/local/Ascend/driver/version.info /etc/ascend_install.info; do [ -r "$file" ] || continue; sed -n 's/^\([Pp]ackage_\{0,1\}\)\{0,1\}[Vv]ersion[=:][[:space:]]*//p' "$file" | head -n 1; break; done)"
 emit_if accelerator.cann "$(file=$(find /usr/local/Ascend/ascend-toolkit -maxdepth 4 -type f \( -name version.info -o -name ascend_toolkit_install.info \) 2>/dev/null | head -n 1); [ -n "$file" ] && sed -n 's/^\([Pp]ackage_\{0,1\}\)\{0,1\}[Vv]ersion[=:][[:space:]]*//p' "$file" | head -n 1)"
+if command -v npu-smi >/dev/null 2>&1; then
+  ascend_acl="$(ldconfig -p 2>/dev/null | awk '/libascendcl\.so/{print $NF; exit}')"
+  if [ -z "$ascend_acl" ]; then
+    for candidate in /usr/local/Ascend/ascend-toolkit/latest/lib64/libascendcl.so* /usr/local/Ascend/ascend-toolkit/latest/*/lib64/libascendcl.so* /usr/local/Ascend/ascend-toolkit/*/lib64/libascendcl.so* /usr/local/Ascend/driver/lib64/driver/libascendcl.so*; do
+      [ -r "$candidate" ] && { ascend_acl="$candidate"; break; }
+    done
+  fi
+  emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1 && [ -n "$ascend_acl" ]; then printf 'available via built-in AscendCL Runtime API probe'; else printf 'unavailable (python3 and libascendcl are required)'; fi)"
+  emit gpu_interconnect.fabric_topology hccs-or-pcie
+  emit gpu_interconnect.fabric_switch unknown
+  emit gpu_interconnect.fabric_switch_status probe-insufficient
+fi
 emit_if accelerator.intel_xpu "$(command -v xpu-smi >/dev/null 2>&1 && xpu-smi discovery 2>/dev/null | paste -sd ';' -)"
 if command -v mthreads-gmi >/dev/null 2>&1; then
   moore_list="$(mthreads-gmi -L 2>/dev/null)"
@@ -220,7 +232,7 @@ pub struct InspectArgs {
     /// Seconds to run each bandwidth measurement
     #[arg(long, default_value_t = 5, requires = "bandwidth")]
     bandwidth_duration: u8,
-    /// Actively measure NVIDIA or Moore Threads GPU-to-GPU P2P bandwidth
+    /// Actively measure NVIDIA, Moore Threads, Hygon, or Ascend accelerator P2P bandwidth
     #[arg(long)]
     gpu_bandwidth: bool,
     /// Only show these comma-separated sections
