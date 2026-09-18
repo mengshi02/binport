@@ -158,6 +158,11 @@ emit_if accelerator.cann "$(file=$(find /usr/local/Ascend/ascend-toolkit -maxdep
 if command -v npu-smi >/dev/null 2>&1; then
   ascend_acl="$(ldconfig -p 2>/dev/null | awk '/libascendcl\.so/{print $NF; exit}')"
   if [ -z "$ascend_acl" ]; then
+    for directory in $(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' ' '); do
+      for candidate in "$directory"/libascendcl.so*; do [ -r "$candidate" ] && { ascend_acl="$candidate"; break 2; }; done
+    done
+  fi
+  if [ -z "$ascend_acl" ]; then
     ascend_acl="$(for root in "${ASCEND_HOME_PATH:-}" "${ASCEND_TOOLKIT_HOME:-}" /usr/local/Ascend /usr/local/ascend /opt/Ascend /opt/ascend; do [ -d "$root" ] || continue; find "$root" \( -type f -o -type l \) -name 'libascendcl.so*' 2>/dev/null; done | grep -v '/stub/' | head -n 1)"
   fi
   emit gpu_interconnect.bandwidth_measurement "$(if command -v python3 >/dev/null 2>&1 && [ -n "$ascend_acl" ]; then printf 'available via built-in AscendCL Runtime API probe'; else printf 'unavailable (python3 and libascendcl are required)'; fi)"

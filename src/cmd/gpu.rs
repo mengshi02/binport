@@ -8,6 +8,7 @@ ascend_roots = [value for value in (
     os.environ.get("ASCEND_HOME_PATH"), os.environ.get("ASCEND_TOOLKIT_HOME"),
     "/usr/local/Ascend", "/usr/local/ascend", "/opt/Ascend", "/opt/ascend"
 ) if value and os.path.isdir(value)]
+ascend_roots.extend(path for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if os.path.isdir(path))
 ascend_candidates = [p for root in ascend_roots for p in glob.glob(
     os.path.join(root, "**", "libascendcl.so*"), recursive=True
 ) if os.path.isfile(p) and "/stub/" not in p]
@@ -44,14 +45,17 @@ elif hygon_smi or hip_library:
     library = hip_library
     topology_command = []
 elif shutil.which("npu-smi"):
-    if not ascend_library:
-        raise RuntimeError("Ascend NPU detected, but libascendcl.so was not found under the CANN installation")
     vendor, prefix, runtime_api = "Huawei Ascend", "aclrt", False
-    library = ascend_library
+    library = ascend_library or "libascendcl.so"
     topology_command = []
 else:
     raise RuntimeError("no supported NVIDIA, Moore Threads, Hygon, or Ascend accelerator was detected")
-driver = ctypes.CDLL(library)
+try:
+    driver = ctypes.CDLL(library)
+except OSError as error:
+    if vendor == "Huawei Ascend":
+        raise RuntimeError("Ascend NPU detected, but the AscendCL runtime could not be loaded; install CANN Toolkit/NNRT or expose libascendcl.so through LD_LIBRARY_PATH") from error
+    raise
 
 if vendor == "Huawei Ascend":
     def acl_call(name, *args):
