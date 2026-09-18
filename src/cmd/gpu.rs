@@ -4,12 +4,16 @@ use std::io;
 
 const GPU_P2P_BENCHMARK: &str = r#"import concurrent.futures, ctypes, ctypes.util, glob, os, shutil, subprocess, sys, threading, time
 hip_library = ctypes.util.find_library("amdhip64")
-ascend_library = ctypes.util.find_library("ascendcl") or next((p for pattern in (
-    "/usr/local/Ascend/ascend-toolkit/latest/lib64/libascendcl.so*",
-    "/usr/local/Ascend/ascend-toolkit/latest/*/lib64/libascendcl.so*",
-    "/usr/local/Ascend/ascend-toolkit/*/lib64/libascendcl.so*",
-    "/usr/local/Ascend/driver/lib64/driver/libascendcl.so*",
-) for p in glob.glob(pattern) if os.path.isfile(p)), None)
+ascend_roots = [value for value in (
+    os.environ.get("ASCEND_HOME_PATH"), os.environ.get("ASCEND_TOOLKIT_HOME"),
+    "/usr/local/Ascend", "/usr/local/ascend", "/opt/Ascend", "/opt/ascend"
+) if value and os.path.isdir(value)]
+ascend_candidates = [p for root in ascend_roots for p in glob.glob(
+    os.path.join(root, "**", "libascendcl.so*"), recursive=True
+) if os.path.isfile(p) and "/stub/" not in p]
+ascend_library = ctypes.util.find_library("ascendcl") or next(iter(sorted(
+    ascend_candidates, key=lambda p: ("/latest/" not in p, "/runtime/" not in p, len(p))
+)), None)
 hygon_smi = shutil.which("hy-smi") or next((p for p in (
     "/opt/hyhal/bin/hy-smi", "/opt/dtk/bin/hy-smi", "/opt/hygondtk/bin/hy-smi"
 ) if os.access(p, os.X_OK)), None)
